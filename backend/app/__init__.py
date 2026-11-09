@@ -1,0 +1,1 @@
+"""StockMate backend application package."""

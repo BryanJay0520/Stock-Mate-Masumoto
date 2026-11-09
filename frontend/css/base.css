@@ -1,0 +1,53 @@
+/* StockMate base styles — design tokens for the whole app.
+   Style direction: modern SaaS dashboard, light background, deep navy
+   sidebar, blue primary actions, green/yellow/red inventory indicators. */
+
+:root {
+  --color-bg: #f5f7fa;
+  --color-surface: #ffffff;
+  --color-sidebar: #1b2a4a;      /* deep navy */
+  --color-primary: #2563eb;      /* blue primary actions */
+  --color-text: #1f2937;
+  --color-text-muted: #6b7280;
+  --color-safe: #16a34a;         /* green */
+  --color-warning: #d97706;      /* yellow/amber */
+  --color-critical: #dc2626;     /* red */
+  --color-incomplete: #9ca3af;   /* gray */
+  --radius-card: 12px;
+  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  background: var(--color-bg);
+  color: var(--color-text);
+}
+
+/* Temporary placeholder layout for the Phase 1 skeleton. */
+.placeholder {
+  max-width: 640px;
+  margin: 15vh auto;
+  padding: 2rem;
+  background: var(--color-surface);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  text-align: center;
+}
+
+.placeholder h1 {
+  color: var(--color-sidebar);
+  margin-bottom: 0.25rem;
+}
+
+.placeholder .status {
+  color: var(--color-text-muted);
+}
+
+.placeholder a {
+  color: var(--color-primary);
+}

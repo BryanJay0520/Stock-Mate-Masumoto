@@ -62,6 +62,14 @@ local_settings.py
 db.sqlite3
 db.sqlite3-journal
 
+# StockMate local database files
+stockmate.db
+stockmate.db-wal
+stockmate.db-shm
+*.db
+*.db-wal
+*.db-shm
+
 # Flask stuff:
 instance/
 .webassets-cache

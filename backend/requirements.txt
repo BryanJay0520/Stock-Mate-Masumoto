@@ -1,0 +1,23 @@
+# StockMate backend dependencies.
+# Every dependency is documented per project rule "explain every new dependency".
+
+# --- Core framework ---
+fastapi>=0.115,<1.0          # Web framework: routing, request validation, automatic OpenAPI docs
+uvicorn[standard]>=0.30,<1.0 # ASGI server that runs the application
+pydantic>=2.7,<3.0           # Data validation models (request/response schemas)
+pydantic-settings>=2.3,<3.0  # Environment-variable configuration (secrets stay out of code, D12)
+
+# --- Database ---
+sqlalchemy>=2.0,<3.0         # ORM; same code runs on SQLite (dev) and PostgreSQL (prod)
+alembic>=1.13,<2.0           # Database schema migrations
+
+# --- Security (used from Phase 1 Step 3: auth) ---
+argon2-cffi>=23.1            # Argon2 password hashing (approved in Phase 0)
+itsdangerous>=2.2            # Signed tokens (CSRF protection, session helpers)
+
+# --- Scheduling (Phase 4 reminders; version pinned per decision D17) ---
+apscheduler>=3.10,<4.0       # In-process scheduler with database-backed job store
+
+# --- Testing ---
+pytest>=8.0,<9.0             # Test runner
+httpx>=0.27,<1.0             # HTTP client required by FastAPI's TestClient
