@@ -4,8 +4,9 @@
 
 **Phase 1 — Inventory MVP: IN PROGRESS**
 
-- **Step 1 (skeleton): ✅ COMPLETE** — awaiting user approval to start Step 2.
-- Steps 2–8: not started (see checklist below).
+- **Step 1 (skeleton): ✅ COMPLETE** (commit `a9de3bc`)
+- **Step 2 (database models + migrations + seed): ✅ COMPLETE** — awaiting user approval to start Step 3.
+- Steps 3–8: not started (see checklist below).
 
 Phase 0 was approved with three final requirements, now reflected in the docs:
 D15 (SQLite-safe concurrency: `BEGIN IMMEDIATE` + atomic conditional UPDATE +
@@ -45,18 +46,29 @@ junction row; service validates supplier `active` status).
    - **Environment note:** development runs in **WSL** (Windows Smart App
      Control blocks pip-installed native packages on the Windows side). Venv:
      `~/.venvs/stockmate` in WSL. See README §Setup.
-2. **Database foundation** ⬜
-   - Models: `users`, `sessions`, `units`, `suppliers`,
-     `supplier_ingredients`, `ingredients` (with `primary_supplier_id` +
-     composite FK per D24), `ingredient_stock_state` (canonical cached
-     balance, D14), `inventory_transactions` (incl. `opening_balance`, D23),
-     `audit_logs`, `app_settings`
-   - Alembic init + first migration
-   - Seed script (clearly fictional): admin/staff demo users; units;
-     demo suppliers (Supplier 1/2/3); demo ingredients — Korean Noodles →
-     Supplier 1, Chinese Noodles → Supplier 2, Soup Base → Supplier 1,
-     Chashu → Supplier 3, plus Eggs, Nori, Green Onions, Menma — with
-     `opening_balance` transactions for every starting quantity (D23)
+2. **Database foundation — ✅ DONE (2026-11-09)**
+   - Models (`app/models/`): `users`, `sessions`, `units`, `suppliers`,
+     `supplier_ingredients` (composite PK), `ingredients` (catalog only —
+     NO stock column; `primary_supplier_id` + composite FK per D24 with
+     `autoincrement=True` workaround), `ingredient_stock_state` (the single
+     canonical cached balance, D14), `inventory_transactions` (immutable
+     ledger incl. `opening_balance`, D23), `audit_logs`, `app_settings`
+   - Alembic: `backend/alembic.ini`, `alembic/env.py` (URL from settings,
+     never hardcoded), `versions/0001_initial_schema.py` — circular FK added
+     via `batch_alter_table` after both tables exist (valid SQLite + PG)
+   - `app/db_admin.py::run_migrations` — one programmatic migration entry
+     point shared by CLI, seed, and tests
+   - `app/seed.py` — idempotent (marker row in `app_settings`); fictional
+     demo data: users admin/staff, 6 units, 3 fictional suppliers, 8
+     ingredients (Korean Noodles → S1, Chinese Noodles → S2, Soup Base → S1,
+     Chashu/Eggs/Nori → S3, Green Onions/Menma → S1; Korean Noodles also has
+     S2 as alternative). Every opening quantity is an `opening_balance`
+     ledger transaction with a deterministic idempotency key (D23).
+   - Tests: `test_schema.py` (FK enforcement, composite FK reject/accept,
+     unique constraints, Decimal round-trip, **model↔migration drift
+     guard**), `test_seed.py` (catalog counts, independent noodle stocks,
+     required assignments, ledger↔balance reconstruction, idempotent reseed)
+   - **18/18 tests pass** (incl. previous 4 health tests)
 3. **Auth & RBAC** ⬜
    - Login/logout/me; server-side sessions; HttpOnly cookies; CSRF token
    - `require_staff` / `require_admin` dependencies on every endpoint

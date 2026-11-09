@@ -52,6 +52,7 @@ Run the application (from a WSL terminal, e.g. VS Code's WSL terminal):
 
 ```bash
 cd /mnt/c/Users/bryan/Projects/StockMate/backend
+~/.venvs/stockmate/bin/python -m app.seed                # one-time: migrate + fictional demo data
 ~/.venvs/stockmate/bin/python -m uvicorn app.main:app --reload
 ```
 
