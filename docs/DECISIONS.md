@@ -1,0 +1,174 @@
+# StockMate — Decisions Log
+
+Numbered decisions. New agents must read this before changing design.
+Append new decisions; do not silently change old ones — supersede them instead.
+
+## D1 — Monolith with thin clients
+
+Single FastAPI process owns all business logic; frontend and future mobile
+apps are thin clients over `/api/v1`. Rejected: frontend-heavy SPA frameworks,
+microservices. Rationale: learning-friendly, one deployable, and the only way
+to guarantee identical behavior across web and future native apps.
+
+## D2 — Append-only inventory ledger
+
+`inventory_transactions` is immutable and authoritative. Corrections create new
+rows (`supersedes_id`) rather than editing history. Rationale: auditability,
+double-count prevention, re-derivable balances.
+
+## D3 — Two entry modes are distinct transaction types
+
+`mode = "remaining"` creates a **reconciliation** (delta vs. current stock);
+`mode = "used"` creates a **consumption**. They are never interchangeable, and
+a reconciliation — not a "used" entry — is the only thing that counts as a
+physical stock verification for the Confidence Indicator. Confirmed deliveries
+do not count as physical verification either.
+
+## D4 — Exact decimal quantities
+
+`NUMERIC(14, 3)` everywhere; floats are forbidden for quantities.
+
+## D5 — UTC storage, business timezone at the edges
+
+All timestamps in UTC; `business_date` and all schedule math use the
+configured timezone (`app_settings.business_timezone`, default `Asia/Tokyo`).
+Timezone is admin-configurable, not hardcoded.
+
+## D6 — Idempotency keys on all stock mutations
+
+Client generates a key per user action; unique constraint collapses retries
+and double-submits. Applies to stock entries and delivery confirmations.
+
+## D7 — Session cookies now, tokens later
+
+HttpOnly session cookies + CSRF for the browser. All auth resolution flows
+through one FastAPI dependency (`get_current_user`), so a Bearer-token path
+(access + refresh) can be added for native apps without touching business
+logic. No JWT until there is a concrete need.
+
+## D8 — Draft orders never count as supply
+
+Only `confirmed`/`partially_delivered` purchase orders feed "confirmed
+incoming" and the conservative projection. `ordered` (unconfirmed) quantities
+are tracked and displayed separately as uncertain. Drafts are planning
+artifacts. Forecasts stay conservative when deliveries are delayed or
+unconfirmed.
+
+## D9 — Confidence is derived, not stored opinions
+
+Confidence status is computed from ledger facts (last reconciliation age,
+unresolved discrepancy flag) against per-ingredient admin thresholds.
+Descriptive levels only (high/medium/low) — no fabricated percentages.
+Displayed independently from supply-risk status.
+
+## D10 — Forecasts are deterministic and explainable
+
+Weekday servings (with date overrides) × usage per serving, walked day by day.
+Every projected number must be reproducible from displayed inputs. No external
+AI/ML services in MVP; simple statistics may be added in Phase 5.
+
+## D11 — Soft delete everywhere operational
+
+Ingredients and suppliers are archived, never deleted. Historical
+transactions, orders, and reports must survive catalog changes. Archived
+suppliers stay visible in historical purchase orders and admin review.
+
+## D12 — No secrets in the repository
+
+All credentials via environment variables (`.env`, gitignored). Notification
+providers must disable safely when unconfigured.
+
+## D13 — PWA/Capacitor deferred but unblocked
+
+MVP is a responsive web app. PWA in a later phase; Capacitor evaluation is a
+future milestone. No browser-only business logic that would block mobile
+packaging. Offline stock entry is deferred; when built it must use idempotent
+queued sync with conflict detection.
+
+## D14 — One canonical cached balance (revised in Phase 0 review)
+
+The only cached stock balance is `ingredient_stock_state.current_quantity`
+(1:1 with `ingredients`). `ingredients` holds catalog data only. Every stock
+write updates the ledger row and the cached balance in one DB transaction,
+serialized per ingredient via a row lock (`SELECT … FOR UPDATE`); a `version`
+column supports optimistic checks. Verify/repair procedures replay the ledger
+to detect and fix drift (see ARCHITECTURE.md §5.1).
+
+## D15 — Concurrency strategy (revised for SQLite safety)
+
+Do **not** rely on `SELECT … FOR UPDATE` (unsupported by SQLite). The portable
+strategy is: `BEGIN IMMEDIATE` write transactions on SQLite, an **atomic
+conditional UPDATE** (`UPDATE … SET qty = qty + :delta WHERE …
+AND qty + :delta >= 0`, requiring rowcount = 1) for the balance change, a
+unique-constraint-backed idempotency check, and bounded retries (3 attempts,
+short backoff) on `SQLITE_BUSY`/deadlock. SQLite runs in WAL mode with a busy
+timeout; concurrent tests assert final correctness, not interleaving.
+`FOR UPDATE` may be added on PostgreSQL later as an optimization only.
+
+## D16 — Cutoff time is inclusive
+
+An order placed at exactly the cutoff instant counts as on time
+(`placed_at <= cutoff` compared as UTC instants). Deadlines are classified as
+`upcoming` / `covered` / `missed` / `expired` — computed, never stored.
+
+## D17 — APScheduler 3.x, single process
+
+Pin `apscheduler>=3.10,<4` with a SQLAlchemy job store. The scheduler runs
+inside the single FastAPI process for MVP (`coalesce=True`, `max_instances=1`,
+`misfire_grace_time` set). Startup catch-up dispatches overdue pending events;
+unique `dedupe_key`s make replays harmless. Scale-out path: web workers
+without scheduler + exactly one dedicated scheduler process
+(`SCHEDULER_ENABLED=true`); DB leader-election only if ever needed.
+
+## D18 — Configurable business-day boundary
+
+`app_settings.business_day_start_time` (default `00:00`) defines when the
+business date rolls over, in the business timezone. A 04:00 boundary assigns
+the post-midnight hours to the previous business date. All daily grouping uses
+the stored `business_date`.
+
+## D19 — Ingredient–supplier model
+
+`supplier_ingredients` (unique `(supplier_id, ingredient_id)`) is the only
+record of "supplier X provides ingredient Y". `ingredients.primary_supplier_id`
+points at one of those rows (service-enforced: a primary must also exist in
+the junction). Alternative suppliers = remaining junction rows. Changing the
+primary never modifies historical purchase orders — orders permanently store
+their own `supplier_id`. Similar-but-different items (e.g. Korean Noodles vs
+Chinese Noodles) are separate ingredients with independent stock, never merged.
+
+## D20 — Reminders are keyed per supplier + delivery date
+
+A multi-ingredient order produces exactly one deadline reminder (payload lists
+the ingredients). No per-ingredient duplicate reminders for the same delivery
+cycle.
+
+## D21 — Intraday delivery availability
+
+Expected deliveries count as available from the start of their delivery
+business day (morning-delivery default). Admin setting
+`delivery_availability` (`same_day`|`next_day`) switches to the conservative
+rule where arrivals count only from the next business day.
+
+## D22 — Phase 1 includes basic supplier management
+
+Supplier CRUD, archive/reactivate with guards, ingredient↔supplier assignment
+(primary + alternatives) are Phase 1 scope. Schedule rules, delivery
+calendars, purchase orders, and supplier reminders are Phase 2 scope.
+
+## D23 — Opening balances are ledger transactions
+
+All starting quantities — including fictional demonstration seed stock — are
+recorded as `opening_balance` transactions in the ledger before any other
+entry. The append-only ledger can therefore always reconstruct the cached
+balance from zero; no quantity ever exists only in the cache.
+
+## D24 — Supplier relationship integrity is DB-enforced
+
+A composite foreign key `ingredients(primary_supplier_id, id)` →
+`supplier_ingredients(supplier_id, ingredient_id)` makes an invalid primary
+assignment impossible at the database level (a primary must be a junction
+row). The service layer additionally validates that the supplier is `active`
+when assigning or ordering; archived suppliers remain readable for history.
+Foreign key enforcement is enabled explicitly on SQLite
+(`PRAGMA foreign_keys=ON`).
