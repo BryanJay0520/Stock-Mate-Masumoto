@@ -60,7 +60,7 @@ SM.pages.ingredients = {
         const selected = categorySelect.value;
         SM.ui.clear(categorySelect).append(
           ui.el("option", { value: "", text: "All categories" }),
-          categories.map((c) => ui.el("option", { value: c, text: c, selected: c === selected })),
+          ...categories.map((c) => ui.el("option", { value: c, text: c, selected: c === selected })),
         );
         refresh();
       } catch (error) {

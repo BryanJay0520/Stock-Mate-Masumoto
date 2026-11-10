@@ -96,7 +96,8 @@
   white-space: nowrap;
 }
 
-.menu-button {
+/* Specificity must beat .btn's display:inline-flex (found in screenshots). */
+.topbar .menu-button {
   display: none;
 }
 
@@ -558,7 +559,7 @@
     padding: var(--space-4);
   }
 
-  .menu-button {
+  .topbar .menu-button {
     display: inline-flex;
   }
 

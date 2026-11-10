@@ -117,8 +117,10 @@ SM.pages.entry = {
         rowsOut.push(["Adjustment", `${quantity - current >= 0 ? "+" : ""}${ui.fromMillis(quantity - current)} ${item.unit}`]);
         rowsOut.push(["New stock balance", `${ui.fromMillis(quantity)} ${item.unit}`]);
       }
+      // Spread: DOM append() does not flatten arrays (it would stringify
+      // them into "[object HTMLElement]" — found by the browser tests).
       ui.clear(preview).append(
-        rowsOut.flatMap(([label, value]) => [
+        ...rowsOut.flatMap(([label, value]) => [
           ui.el("dt", { text: label }), ui.el("dd", { text: value }),
         ]),
       );

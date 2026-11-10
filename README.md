@@ -81,6 +81,23 @@ built-in Node.js test runner, run from the repo root in Windows or WSL):
 node --test "frontend/tests/*.test.js"
 ```
 
+Real browser tests (headless Chrome/Edge via the DevTools Protocol, zero
+dependencies, Windows Node >= 22). Requires a FRESHLY seeded backend on
+port 8765 — the suite mutates data, so reseed before every run:
+
+```bash
+# In WSL:
+cd /mnt/c/Users/bryan/Projects/StockMate/backend
+rm -f /tmp/stockmate-browsertest.db*
+STOCKMATE_DATABASE_URL="sqlite:////tmp/stockmate-browsertest.db" ~/.venvs/stockmate/bin/python -m app.seed
+STOCKMATE_DATABASE_URL="sqlite:////tmp/stockmate-browsertest.db" ~/.venvs/stockmate/bin/python -m uvicorn app.main:app --port 8765
+
+# In a Windows terminal (repo root), while the server runs:
+node frontend/tests/browser_smoke.mjs
+```
+
+Screenshots are saved to a temp directory whose path is printed at the end.
+
 ## Authentication (added Step 3)
 
 Login flow: `POST /api/v1/auth/login` with username + password → the server

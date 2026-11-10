@@ -5,12 +5,13 @@
 
 ## Where the project is
 
-- **Current phase:** Phase 1 — Inventory MVP.
-- **Progress:** Steps 1–6 complete — skeleton (`a9de3bc`), database
+- **Current phase:** Phase 1 — Inventory MVP (functionally complete).
+- **Progress:** Steps 1–7 complete — skeleton (`a9de3bc`), database
   (`c9e72ae`), auth & RBAC (`9aa5966`), inventory ledger (`8283161`),
-  supplier/ingredient admin (`d57b34f`), frontend dashboard
-  (**92 backend + 5 Node tests passing**, uncommitted at time of writing).
-  **Awaiting user approval to commit Step 6 and start Step 7.**
+  supplier/ingredient admin (`d57b34f`), frontend dashboard (`c1fa23e`),
+  integration testing & stabilization (**92 backend + 5 Node unit +
+  24/24 real browser tests passing**, uncommitted at time of writing).
+  **Awaiting user approval to commit Step 7; Phase 2 has NOT started.**
 - Development happens **incrementally, one step at a time** — never implement
   multiple Phase 1 steps without explicit user approval.
 
@@ -197,6 +198,39 @@
     **No browser/DOM automation exists — do not claim rendered-UI coverage.**
   - All JS passes `node --check`; live uvicorn smoke test (login, stock,
     units, assets) passed.
+- **Phase 1 Step 7** (uncommitted at time of writing — commit after user review):
+  - `frontend/tests/browser_smoke.mjs` — REAL browser testing, 24 tests,
+    zero dependencies: headless Chrome via DevTools Protocol using Node's
+    built-in fetch + WebSocket (Node >= 22). Requires Windows Node +
+    Chrome/Edge (set `CHROME_PATH`) and a FRESHLY seeded backend on :8765
+    (`STOCKMATE_TEST_URL` to override). Reseed before every run — the suite
+    mutates data. Screenshots go to a temp dir (printed at the end).
+  - Two REAL bugs found by rendered testing and fixed:
+    1. DOM `.append(array)` stringifies arrays ("[object HTMLElement]") —
+       broke the entry preview and the ingredient category dropdown.
+       Fixed with spread in `entry.js` and `ingredients.js`. Never pass an
+       array to `.append()`; `SM.ui.el` children DO flatten, `.append` does NOT.
+    2. `.btn { display:inline-flex }` beat `.menu-button { display:none }`
+       at equal specificity — fixed with `.topbar .menu-button` scoping.
+  - Browser-test gotchas: Runtime.evaluate shares the page's global scope
+    (wrap multi-statement bodies in an IIFE; add `return` when the value is
+    used); page titles update BEFORE `#view` rerenders, so wait on
+    page-specific CONTENT, not titles or row counts.
+  - Security scans confirmed: no localStorage/sessionStorage, no innerHTML
+    with API data, no credentials in frontend app code.
+  - Full production readiness review is in `docs/PROJECT_STATUS.md`
+    ("Production readiness review" section) — demo creds, dev secret, HTTPS
+    cookies, per-process rate limit, backups, structured logging, and
+    security headers are all Phase 6 items. NOT deployment-ready.
+  - Totals: 92 backend + 5 Node unit + 24 browser = 121 checks passing.
+
+## Suggested review areas for the next agent (OpenAI Codex)
+
+- `backend/app/services/inventory.py` — ledger atomicity, D27/D28 semantics.
+- `backend/app/services/catalog.py` — junction sync order (D30), archive guards.
+- `frontend/js/pages/entry.js` — idempotency-key lifecycle and submit locking.
+- `frontend/tests/browser_smoke.mjs` — extend scenarios when new pages arrive.
+- Production-readiness gaps listed in `docs/PROJECT_STATUS.md` (Phase 6 scope).
 
 ## Key rules for all agents
 
@@ -214,15 +248,14 @@
 
 ## Pending decisions (waiting on user)
 
-- Approval to commit Phase 1 Step 6 (frontend dashboard) and start Step 7.
-- Step 7 scope was never separately specified by the user — confirm what it
-  should cover (remaining Phase 1 checklist items are tests/docs, which are
-  already done; a manual browser QA pass is recommended before Phase 2).
+- Approval to commit Phase 1 Step 7 (integration testing & stabilization).
+- Approval to start Phase 2 (supplier schedules, purchase orders) — the
+  Phase 1 checklist item 8 is docs-only and already maintained.
 
 ## Recommended next task
 
-Manual browser QA of the Step 6 UI (no DOM automation exists), then user
-direction for Phase 2 (supplier schedules & purchase orders).
+**Phase 2** per `docs/ARCHITECTURE.md`: supplier schedule rules, delivery
+calendars, cutoff engine, purchase orders, delivery confirmation.
 
 ## Git
 
@@ -232,6 +265,7 @@ direction for Phase 2 (supplier schedules & purchase orders).
 - `9aa5966` — "Add authentication, sessions, and role-based access control" (Step 3).
 - `8283161` — "Add inventory ledger with dual stock entry and corrections" (Step 4).
 - `d57b34f` — "Add supplier and ingredient administration APIs" (Step 5).
-- Phase 1 Step 6 files are uncommitted, awaiting the user's commit approval.
-- Suggested message: "Add responsive frontend dashboard and stock entry UI".
+- `c1fa23e` — "Add responsive frontend dashboard and stock entry UI" (Step 6).
+- Phase 1 Step 7 files are uncommitted, awaiting the user's commit approval.
+- Suggested message: "Add browser integration tests and fix UI rendering bugs".
 - **Do not push or merge without explicit user approval.**

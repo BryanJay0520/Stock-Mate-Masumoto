@@ -11,9 +11,11 @@
 - **Safeguards (D27/D28/D29): ✅ COMPLETE** — correction-vs-newer-reconciliation
   guard, idempotency-payload conflict detection, deferred BEGIN for reads.
 - **Step 5 (supplier & ingredient admin): ✅ COMPLETE** (commit `d57b34f`)
-- **Step 6 (frontend dashboard): ✅ COMPLETE** — 92 backend + 5 Node tests
-  passing; awaiting user approval to commit and start Step 7.
-- Steps 7–8: not started (see checklist below).
+- **Step 6 (frontend dashboard): ✅ COMPLETE** (commit `c1fa23e`)
+- **Step 7 (integration testing & stabilization): ✅ COMPLETE** — 92 backend +
+  5 Node unit + **24/24 real browser tests** passing; two UI bugs found and
+  fixed. Awaiting user approval to commit.
+- Step 8: not started (see checklist below).
 
 Phase 0 was approved with three final requirements, now reflected in the docs:
 D15 (SQLite-safe concurrency: `BEGIN IMMEDIATE` + atomic conditional UPDATE +
@@ -27,7 +29,7 @@ junction row; service validates supplier `active` status).
 | Phase | Scope | Status |
 |-------|-------|--------|
 | 0 | Planning, architecture, docs (incl. review revision) | ✅ Done (commit `e53898d`) |
-| 1 | Inventory MVP: DB, auth, ingredients, **basic supplier CRUD + assignment**, dual stock entry, ledger, dashboard, confidence timestamps | 🔶 Steps 1–6 of 8 done |
+| 1 | Inventory MVP: DB, auth, ingredients, **basic supplier CRUD + assignment**, dual stock entry, ledger, dashboard, confidence timestamps | 🔶 Steps 1–7 of 8 done |
 | 2 | Supplier schedule rules, delivery calendars, cutoff engine, purchase orders, delivery confirmation, supplier reminders (engine part), alternative-supplier ordering | ⬜ Not started |
 | 3 | Demand forecasting, forecast calendar, status colors, order suggestions, confidence indicators | ⬜ Not started |
 | 4 | Scheduled reminders, in-app notifications, preferences, provider routing | ⬜ Not started |
@@ -180,6 +182,27 @@ junction row; service validates supplier `active` status).
    - Live smoke test passed: uvicorn serving index + assets, real login,
      stock data, units endpoint
 7. **Tests (pytest) — ✅ covered incrementally in steps 2–6 (92 passing)**
+   - **Step 7 browser automation:** `frontend/tests/browser_smoke.mjs` —
+     24 rendered-app tests via headless Chrome DevTools Protocol using only
+     Node built-ins (fetch + WebSocket, zero new dependencies). Covers login/
+     logout/failed login, dashboard data, inventory filters + separate
+     availability/confidence badges, used & remaining entry end-to-end,
+     double-click prevention, large-adjustment dialog, supplier create/
+     archive-blocked/archive/reactivate, ingredient create with opening
+     balance, catalog-edit balance protection, D27 correction warning,
+     staff read-only UI, negative-stock error, cleared-session redirect,
+     and 5 viewport widths (1440/1024/768/390/360) with overflow checks,
+     screenshots, and desktop/mobile menu-button assertions.
+   - **Bugs found by browser testing and fixed:**
+     1. `entry.js` preview and `ingredients.js` category dropdown passed
+        ARRAYS to DOM `.append()`, rendering `[object HTMLElement]` instead
+        of content — fixed with spread (the stock preview never worked).
+     2. `.btn { display:inline-flex }` overrode `.menu-button { display:none }`
+        at equal specificity — the mobile menu button showed on desktop.
+        Fixed by scoping to `.topbar .menu-button`; regression assertions added.
+   - Security scans: no localStorage/sessionStorage, no innerHTML with API
+     data, no credentials in frontend application code (demo passwords exist
+     only in the test script and seed, both dev-only).
    - Ledger math both modes; reconciliation ≠ consumption ✅
    - **Concurrent stock entries** (parallel same-ingredient submissions →
      exact final balance) ✅
@@ -198,8 +221,26 @@ junction row; service validates supplier `active` status).
 - PostgreSQL target is design-only until deployment phase.
 - External notification channels (email, LINE, push) are provider stubs until Phase 4.
 - Open-order check in the supplier archive guard becomes active in Phase 2.
-- **No browser/DOM test automation** (no Node in WSL; Windows Node runs unit
-  tests only). UI interactions are verified via API-level integration tests
-  and `node --check`; a manual browser pass is recommended before Phase 2.
+- **Browser tests run on Windows Node + Chrome/Edge only** (WSL has no Node).
+  They mutate the database: reseed before every full run. Command:
+  `node frontend/tests/browser_smoke.mjs` against a seeded server on :8765.
 - Supplier edit form cannot clear optional text fields to empty (PATCH
   treats empty as "no change") — cosmetic limitation, tracked for later.
+- Toasts can overlap table content temporarily (cosmetic).
+
+## Production readiness review (Step 7 — NOT deployment-ready yet)
+
+Functionally Phase 1 is complete, but these items remain for Phase 6 before
+any public deployment (none of them block Phase 2 development):
+
+| Area | Current state | Required before production |
+|------|---------------|----------------------------|
+| Demo credentials | `admin`/`staff` with public dev passwords seeded | Never seed demo data in prod; create accounts via `app.cli create-admin` |
+| Secret key | Public default in `app/config.py` | Set `STOCKMATE_SECRET_KEY` to a long random value |
+| HTTPS / cookies | `secure_cookies` defaults off for localhost | HTTPS only + `STOCKMATE_SECURE_COOKIES=true` |
+| Login rate limit | Per-process sliding window (D26) | Shared store if multi-worker |
+| Sessions | 12 h TTL, SHA-256-hashed tokens, revocation works | OK; consider shorter TTL policy |
+| Backups | Not implemented | Scheduled SQLite/PostgreSQL backups + restore drills |
+| Error logging | Unhandled errors → generic 500 (no internals leaked); no structured request/error logging | Structured logging + alerting |
+| Security headers | No CSP/HSTS etc. | Configure at reverse proxy / deployment |
+| Database | SQLite single-process, WAL, FK on, tested concurrency | PostgreSQL migration via Alembic when scaling |
