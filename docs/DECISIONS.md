@@ -172,3 +172,20 @@ row). The service layer additionally validates that the supplier is `active`
 when assigning or ordering; archived suppliers remain readable for history.
 Foreign key enforcement is enabled explicitly on SQLite
 (`PRAGMA foreign_keys=ON`).
+
+## D25 — CSRF via signed double-submit token
+
+Because we use cookie sessions, every mutating endpoint (except login/logout)
+requires the `X-CSRF-Token` header to match the `stockmate_csrf` cookie. The
+token is the session token's hash signed with the server secret
+(itsdangerous), so it is bound to the session, unforgeable for other
+sessions, and requires no extra database columns. The CSRF cookie is
+non-HttpOnly by design (our JS must read it); the session cookie stays
+HttpOnly.
+
+## D26 — Login rate limiting is per-process for the MVP
+
+Failed logins are limited (default 5 per 10 minutes per username+client)
+using an in-memory sliding window. Acceptable because the MVP runs a single
+process; if we ever scale to multiple workers, the limiter moves to a shared
+store (e.g. the database or Redis) — same interface.

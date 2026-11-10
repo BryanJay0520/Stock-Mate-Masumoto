@@ -16,7 +16,29 @@ const StockMateAPI = {
     return response.json();
   },
 
-  // POST/CSRF helpers are added in Phase 1 Step 3 together with auth.
+  getCookie(name) {
+    const match = document.cookie.match(new RegExp("(?:^|; )" + name + "=([^;]*)"));
+    return match ? decodeURIComponent(match[1]) : null;
+  },
+
+  // Mutating requests must echo the CSRF cookie in this header
+  // (double-submit pattern, see backend/app/auth/csrf.py).
+  async post(path, body) {
+    const response = await fetch(this.baseUrl + path, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "X-CSRF-Token": this.getCookie("stockmate_csrf") || "",
+      },
+      credentials: "same-origin",
+      body: JSON.stringify(body ?? {}),
+    });
+    if (!response.ok) {
+      throw new Error(`API error ${response.status}: ${await response.text()}`);
+    }
+    return response.json();
+  },
 };
 
 window.StockMateAPI = StockMateAPI;

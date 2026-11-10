@@ -39,6 +39,12 @@ class Settings(BaseSettings):
     # The default is intentionally insecure and only usable in development.
     secret_key: str = "dev-only-insecure-secret-change-me"
 
+    # Session & login security (Phase 1 Step 3).
+    session_ttl_hours: int = 12
+    secure_cookies: bool = False  # set True behind HTTPS in production
+    login_rate_limit_attempts: int = 5
+    login_rate_limit_window_seconds: int = 600
+
     # Directory with the static frontend served by FastAPI.
     static_dir: Path = PROJECT_ROOT / "frontend"
 

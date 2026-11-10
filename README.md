@@ -69,6 +69,27 @@ cd /mnt/c/Users/bryan/Projects/StockMate/backend
 ~/.venvs/stockmate/bin/python -m pytest tests/ -v
 ```
 
+## Authentication (added Step 3)
+
+Login flow: `POST /api/v1/auth/login` with username + password → the server
+sets an **HttpOnly session cookie** and a readable **CSRF cookie**, and
+returns the user object. All mutating API calls must send the CSRF cookie's
+value back in the `X-CSRF-Token` header (the `StockMateAPI.post` helper in
+`frontend/js/api.js` does this automatically). `POST /api/v1/auth/logout`
+revokes the session server-side.
+
+Demo accounts (dev only): `admin` / `demo-admin-password`,
+`staff` / `demo-staff-password`.
+
+Create a real administrator (no default credentials exist):
+
+```bash
+cd /mnt/c/Users/bryan/Projects/StockMate/backend
+~/.venvs/stockmate/bin/python -m app.cli create-admin --username yourname
+```
+
+The password is typed hidden, strength-checked, and never printed or logged.
+
 ## Data disclaimer
 
 All seed/demo data is explicitly fictional and must never be treated as real restaurant inventory.

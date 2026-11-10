@@ -5,8 +5,9 @@
 **Phase 1 — Inventory MVP: IN PROGRESS**
 
 - **Step 1 (skeleton): ✅ COMPLETE** (commit `a9de3bc`)
-- **Step 2 (database models + migrations + seed): ✅ COMPLETE** — awaiting user approval to start Step 3.
-- Steps 3–8: not started (see checklist below).
+- **Step 2 (database models + migrations + seed): ✅ COMPLETE** (commit `c9e72ae`)
+- **Step 3 (auth & RBAC): ✅ COMPLETE** — awaiting user approval to start Step 4.
+- Steps 4–8: not started (see checklist below).
 
 Phase 0 was approved with three final requirements, now reflected in the docs:
 D15 (SQLite-safe concurrency: `BEGIN IMMEDIATE` + atomic conditional UPDATE +
@@ -69,9 +70,26 @@ junction row; service validates supplier `active` status).
      guard**), `test_seed.py` (catalog counts, independent noodle stocks,
      required assignments, ledger↔balance reconstruction, idempotent reseed)
    - **18/18 tests pass** (incl. previous 4 health tests)
-3. **Auth & RBAC** ⬜
-   - Login/logout/me; server-side sessions; HttpOnly cookies; CSRF token
-   - `require_staff` / `require_admin` dependencies on every endpoint
+3. **Auth & RBAC — ✅ DONE (2026-11-09), 37/37 tests passing**
+   - `app/auth/`: `passwords.py` (Argon2 + strength rules), `tokens.py`
+     (secure tokens, DB stores SHA-256 hash only), `sessions.py` (create /
+     validate / revoke, 12 h TTL), `csrf.py` (signed double-submit token
+     bound to session, D25), `rate_limit.py` (per-process sliding window,
+     D26), `dependencies.py` (`get_session_and_user` — the single auth
+     entry point with the documented future Bearer-token extension, D7;
+     `require_admin`; `csrf_protect`)
+   - `app/errors.py` — consistent `{"error": {...}}` responses
+   - Routes: `POST /auth/login`, `POST /auth/logout`, `GET /auth/me`;
+     admin-only `GET/POST /admin/users` (RBAC + CSRF, with audit log)
+   - `app/cli.py` — `python -m app.cli create-admin`: interactive hidden
+     password entry, strength validation, no printed/logged passwords
+   - Config: `session_ttl_hours`, `secure_cookies`, rate-limit knobs
+   - `frontend/js/api.js` — `post()` with automatic `X-CSRF-Token` header
+   - `tests/test_auth.py` — 19 tests: login/cookie flags, identical generic
+     401s, me/logout/expired/revoked/inactive sessions, staff→403, admin
+     list/create, CSRF reject/accept/cross-session, weak password → 400,
+     duplicate → 409, rate limit → 429, Argon2 round-trip, Secure flag
+   - Live smoke test passed (login → me → staff 403 → logout → 401)
 4. **Inventory service (the ledger, D2/D3/D6/D14/D15)** ⬜
    - `POST /api/v1/inventory/entries`: idempotency check → `BEGIN IMMEDIATE`
      → delta → atomic conditional UPDATE (rowcount = 1) → negative guard →

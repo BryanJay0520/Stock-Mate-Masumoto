@@ -6,9 +6,9 @@
 ## Where the project is
 
 - **Current phase:** Phase 1 — Inventory MVP.
-- **Progress:** Step 1 (skeleton, commit `a9de3bc`) and Step 2 (database
-  models + Alembic migration + idempotent fictional seed) **complete and
-  tested (18/18)**. **Awaiting user approval before Step 3** (auth & RBAC).
+- **Progress:** Step 1 (`a9de3bc`), Step 2 (`c9e72ae`), and Step 3
+  (authentication & RBAC — **37/37 tests passing**) are complete.
+  **Awaiting user approval before Step 4** (inventory ledger service).
 - Development happens **incrementally, one step at a time** — never implement
   multiple Phase 1 steps without explicit user approval.
 
@@ -80,6 +80,31 @@
   - A drift-guard test (`test_migration_matches_models`) fails the suite if
     models and migrations ever diverge — keep both in sync when changing
     schema.
+- **Phase 1 Step 3** (uncommitted at time of writing — commit after user review):
+  - `app/auth/`: `passwords.py` (Argon2), `tokens.py` (DB stores SHA-256 of
+    tokens only), `sessions.py` (12 h TTL, revoke on logout), `csrf.py`
+    (signed double-submit token bound to the session token hash — D25),
+    `rate_limit.py` (in-memory per-process sliding window — D26),
+    `dependencies.py` (`get_session_and_user` is THE single auth entry point;
+    the future native-mobile Bearer-token path goes inside it, D7).
+  - `app/errors.py` — `ApiError` → `{"error": {code, message}}`, handler
+    registered in `main.py`.
+  - Routes: `auth.py` (login/logout/me) and `admin_users.py`
+    (admin-only user list/create, CSRF-protected, audit-logged).
+  - `app/cli.py` — `python -m app.cli create-admin`: getpass hidden entry,
+    strength validation, never prints/logs passwords.
+  - Config additions: `session_ttl_hours`, `secure_cookies`,
+    `login_rate_limit_attempts`, `login_rate_limit_window_seconds`.
+  - Cookie contract: `stockmate_session` (HttpOnly, SameSite=Lax, Secure
+    when configured) + `stockmate_csrf` (readable — frontend echoes it in
+    `X-CSRF-Token`; `frontend/js/api.js` `post()` does this automatically).
+  - Login/logout are CSRF-exempt by design; every other mutating endpoint
+    must include `dependencies=[Depends(csrf_protect)]`.
+  - Tests: `test_auth.py` (19 tests) — **37/37 passing**; live curl smoke
+    test verified login → me → staff-403 → logout → 401.
+  - Gotcha: SQLite returns naive datetimes — `sessions._as_utc` normalizes
+    before comparing expiries. Reuse that helper if you compare stored
+    datetimes.
 
 ## Key rules for all agents
 
@@ -97,18 +122,22 @@
 
 ## Pending decisions (waiting on user)
 
-- Approval to commit Phase 1 Step 2 and start Step 3 (auth & RBAC).
+- Approval to commit Phase 1 Step 3 and start Step 4 (inventory ledger service).
 
 ## Recommended next task
 
-**Phase 1, Step 3** per `docs/PROJECT_STATUS.md`: authentication & RBAC —
-login/logout/me endpoints, server-side sessions, HttpOnly cookies, CSRF
-token, `require_staff` / `require_admin` dependencies.
+**Phase 1, Step 4** per `docs/PROJECT_STATUS.md`: the inventory ledger
+service — `POST /api/v1/inventory/entries` implementing both entry modes with
+the atomic write protocol (ARCHITECTURE.md §5.1: idempotency →
+`BEGIN IMMEDIATE` → atomic conditional UPDATE with rowcount check → guards →
+ledger row, bounded retries, D15), transaction history endpoint, corrections,
+and the ledger verify/repair function.
 
 ## Git
 
 - `e53898d` — "Finalize StockMate Phase 0 architecture" (docs).
 - `a9de3bc` — "Add StockMate backend foundation and health checks" (Step 1).
-- Phase 1 Step 2 files are uncommitted, awaiting the user's commit approval.
-- Suggested message: "Add database models, migrations, and demo seed data".
+- `c9e72ae` — "Add database models, migrations, and demo seed data" (Step 2).
+- Phase 1 Step 3 files are uncommitted, awaiting the user's commit approval.
+- Suggested message: "Add authentication, sessions, and role-based access control".
 - **Do not push or merge without explicit user approval.**

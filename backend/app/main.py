@@ -10,8 +10,10 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
 from app.api.v1.router import api_router
+from app.auth.rate_limit import RateLimiter
 from app.config import Settings, get_settings
 from app.database import create_db_engine, create_session_factory
+from app.errors import ApiError, api_error_handler
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -25,6 +27,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.db_engine = engine
     app.state.session_factory = create_session_factory(engine)
     app.state.settings = settings
+
+    # Consistent error shape {"error": {...}} for all ApiError raises.
+    app.add_exception_handler(ApiError, api_error_handler)
+
+    # Per-process login rate limiter (MVP; see app/auth/rate_limit.py).
+    app.state.login_limiter = RateLimiter()
 
     # Versioned API first — it must win over the static mount below.
     app.include_router(api_router, prefix="/api/v1")
