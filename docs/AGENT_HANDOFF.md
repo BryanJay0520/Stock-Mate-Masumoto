@@ -6,11 +6,11 @@
 ## Where the project is
 
 - **Current phase:** Phase 1 — Inventory MVP.
-- **Progress:** Steps 1–5 complete — skeleton (`a9de3bc`), database
+- **Progress:** Steps 1–6 complete — skeleton (`a9de3bc`), database
   (`c9e72ae`), auth & RBAC (`9aa5966`), inventory ledger (`8283161`),
-  safeguards D27–D29 + supplier/ingredient admin (**82/82 tests passing**,
-  uncommitted at time of writing).
-  **Awaiting user approval to commit Step 5 and start Step 6** (frontend pages).
+  supplier/ingredient admin (`d57b34f`), frontend dashboard
+  (**92 backend + 5 Node tests passing**, uncommitted at time of writing).
+  **Awaiting user approval to commit Step 6 and start Step 7.**
 - Development happens **incrementally, one step at a time** — never implement
   multiple Phase 1 steps without explicit user approval.
 
@@ -163,6 +163,40 @@
     - Error body shape is `{"error": {"code", "message"}}`.
     - `POST /inventory/entries` returns 200 (also for fresh entries) — no 201.
   - `tests/test_catalog.py` — 20 tests. **82/82 passing.**
+- **Phase 1 Step 6** (uncommitted at time of writing — commit after user review):
+  - Full responsive SPA in `frontend/`: `index.html` shell (sidebar, topbar,
+    `#view`, toasts, modals), `css/base.css` (tokens per spec: bg #F7F9FC,
+    sidebar #102B4E, primary #2563EB), `css/app.css` (layout + components,
+    responsive tables→cards <720px, collapsible sidebar <900px).
+  - `js/api.js` (`SM.api` + `SM.ApiError{status,code,message}`, CSRF header
+    on mutations, 401 → `SM.app.showLogin`), `js/ui.js` (safe DOM via
+    textContent only; `toMillis`/`fromMillis` integer-thousandths math for
+    previews; modal/confirmDialog/toast), `js/auth.js` (in-memory user only),
+    `js/data.js` (shared catalog loader + availability vs confidence badges),
+    `js/app.js` (hash router `#/dashboard` etc., role-aware shell),
+    `js/pages/{login,dashboard,inventory,entry,suppliers,ingredients,history,settings}.js`.
+  - Entry page contract: fresh idempotency key per logical submission
+    (`crypto.randomUUID` with fallback), SAME key on retry and on the
+    confirmed re-submit after `confirmation_required`; button locked while
+    pending. Corrections in history reuse that key generator
+    (`SM.pages.entry.newKey()`).
+  - **Gotchas:**
+    - `GET /admin/users` returns `{"users": [...]}`, not a bare list.
+    - `GET /health` fields are camelCase (`businessTimezone`).
+    - `POST /inventory/entries` returns 200 (not 201); success body is
+      `{transaction, idempotent_replay}`.
+    - Server checks negative stock BEFORE large-adjustment confirmation.
+    - New read-only endpoint `GET /api/v1/units` feeds the ingredient form.
+    - `IngredientUpdate.primary_supplier_id = null` means "no change" —
+      the ingredient form omits it when nothing is selected.
+  - Tests: `backend/tests/test_frontend.py` (10 API-level integration tests
+    driving the exact UI request flows + static assets), `frontend/tests/
+    ui.test.js` (5 Node unit tests). **92 backend + 5 Node passing.**
+    Run Node tests from repo root: `node --test "frontend/tests/*.test.js"`
+    (Windows Node v24 works; WSL has NO node).
+    **No browser/DOM automation exists — do not claim rendered-UI coverage.**
+  - All JS passes `node --check`; live uvicorn smoke test (login, stock,
+    units, assets) passed.
 
 ## Key rules for all agents
 
@@ -180,14 +214,15 @@
 
 ## Pending decisions (waiting on user)
 
-- Approval to commit Phase 1 Step 5 (safeguards + supplier/ingredient admin)
-  and start Step 6 (frontend pages).
+- Approval to commit Phase 1 Step 6 (frontend dashboard) and start Step 7.
+- Step 7 scope was never separately specified by the user — confirm what it
+  should cover (remaining Phase 1 checklist items are tests/docs, which are
+  already done; a manual browser QA pass is recommended before Phase 2).
 
 ## Recommended next task
 
-**Phase 1, Step 6** per `docs/PROJECT_STATUS.md`: frontend pages — Login,
-Dashboard, Inventory list, Daily Stock Entry (mode toggle), Ingredient admin
-(primary-supplier dropdown), Supplier admin, Transaction history.
+Manual browser QA of the Step 6 UI (no DOM automation exists), then user
+direction for Phase 2 (supplier schedules & purchase orders).
 
 ## Git
 
@@ -196,6 +231,7 @@ Dashboard, Inventory list, Daily Stock Entry (mode toggle), Ingredient admin
 - `c9e72ae` — "Add database models, migrations, and demo seed data" (Step 2).
 - `9aa5966` — "Add authentication, sessions, and role-based access control" (Step 3).
 - `8283161` — "Add inventory ledger with dual stock entry and corrections" (Step 4).
-- Phase 1 Step 5 files are uncommitted, awaiting the user's commit approval.
-- Suggested message: "Add supplier and ingredient administration APIs".
+- `d57b34f` — "Add supplier and ingredient administration APIs" (Step 5).
+- Phase 1 Step 6 files are uncommitted, awaiting the user's commit approval.
+- Suggested message: "Add responsive frontend dashboard and stock entry UI".
 - **Do not push or merge without explicit user approval.**

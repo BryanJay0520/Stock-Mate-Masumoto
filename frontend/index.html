@@ -3,18 +3,52 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#102b4e" />
   <title>StockMate</title>
   <link rel="stylesheet" href="/css/base.css" />
+  <link rel="stylesheet" href="/css/app.css" />
 </head>
 <body>
-  <main class="placeholder">
-    <h1>StockMate</h1>
-    <p>Smart restaurant inventory &amp; supply planning.</p>
-    <p class="status">
-      Phase 1 — application skeleton running.
-      API health: <a href="/api/v1/health">/api/v1/health</a>
-    </p>
-  </main>
+  <div id="app">
+    <div class="shell" id="shell">
+      <aside class="sidebar" id="sidebar" aria-label="Main navigation">
+        <div class="sidebar__brand">
+          StockMate
+          <small>Restaurant Inventory</small>
+        </div>
+        <nav class="sidebar__nav" id="nav"></nav>
+        <div class="sidebar__footer" id="sidebar-user"></div>
+      </aside>
+      <div class="sidebar-overlay" id="sidebar-overlay"></div>
+      <main class="main">
+        <div class="topbar">
+          <button class="btn btn--secondary btn--small menu-button" id="menu-button"
+                  aria-label="Open navigation menu">☰ Menu</button>
+          <h1 class="topbar__title" id="page-title">StockMate</h1>
+          <span class="topbar__user" id="topbar-user"></span>
+          <button class="btn btn--secondary btn--small" id="logout-button">Log out</button>
+        </div>
+        <div id="view" aria-live="polite"></div>
+      </main>
+    </div>
+  </div>
+  <div class="toast-container" id="toasts"></div>
+  <div id="modals"></div>
+
+  <!-- Classic scripts, no build step: keeps the frontend portable to a
+       future PWA / Capacitor shell without changing the architecture. -->
   <script src="/js/api.js"></script>
+  <script src="/js/ui.js"></script>
+  <script src="/js/auth.js"></script>
+  <script src="/js/data.js"></script>
+  <script src="/js/pages/login.js"></script>
+  <script src="/js/pages/dashboard.js"></script>
+  <script src="/js/pages/inventory.js"></script>
+  <script src="/js/pages/entry.js"></script>
+  <script src="/js/pages/suppliers.js"></script>
+  <script src="/js/pages/ingredients.js"></script>
+  <script src="/js/pages/history.js"></script>
+  <script src="/js/pages/settings.js"></script>
+  <script src="/js/app.js"></script>
 </body>
 </html>

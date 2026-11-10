@@ -3,7 +3,12 @@
 Smart restaurant inventory management and supply planning system.
 Web-based, mobile-ready, designed initially for a ramen restaurant.
 
-🚧 **Work in Progress — Phase 0 (Planning & Architecture)**
+🚧 **Work in Progress — Phase 1 (Inventory MVP), Steps 1–6 complete**
+
+The responsive web UI is live: login, dashboard, inventory, dual-mode daily
+stock entry, supplier & ingredient admin, transaction history with
+corrections, and account settings. Forecasting, purchase orders, and
+notifications arrive in later phases.
 
 ## What it does (planned)
 
@@ -69,12 +74,19 @@ cd /mnt/c/Users/bryan/Projects/StockMate/backend
 ~/.venvs/stockmate/bin/python -m pytest tests/ -v
 ```
 
+Frontend unit tests (quantity math helpers, no dependencies — uses the
+built-in Node.js test runner, run from the repo root in Windows or WSL):
+
+```bash
+node --test "frontend/tests/*.test.js"
+```
+
 ## Authentication (added Step 3)
 
 Login flow: `POST /api/v1/auth/login` with username + password → the server
 sets an **HttpOnly session cookie** and a readable **CSRF cookie**, and
 returns the user object. All mutating API calls must send the CSRF cookie's
-value back in the `X-CSRF-Token` header (the `StockMateAPI.post` helper in
+value back in the `X-CSRF-Token` header (the `SM.api` helper in
 `frontend/js/api.js` does this automatically). `POST /api/v1/auth/logout`
 revokes the session server-side.
 

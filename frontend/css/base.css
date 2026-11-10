@@ -1,53 +1,79 @@
-/* StockMate base styles — design tokens for the whole app.
-   Style direction: modern SaaS dashboard, light background, deep navy
-   sidebar, blue primary actions, green/yellow/red inventory indicators. */
+/* StockMate design tokens — single source for colors, spacing, typography.
+   Solid backgrounds only (no gradients), soft shadows, subtle borders. */
 
 :root {
-  --color-bg: #f5f7fa;
+  --color-bg: #f7f9fc;
   --color-surface: #ffffff;
-  --color-sidebar: #1b2a4a;      /* deep navy */
-  --color-primary: #2563eb;      /* blue primary actions */
-  --color-text: #1f2937;
-  --color-text-muted: #6b7280;
-  --color-safe: #16a34a;         /* green */
-  --color-warning: #d97706;      /* yellow/amber */
-  --color-critical: #dc2626;     /* red */
-  --color-incomplete: #9ca3af;   /* gray */
+  --color-sidebar: #102b4e;
+  --color-sidebar-text: #cbd5e1;
+  --color-sidebar-active: #1d3f6e;
+  --color-primary: #2563eb;
+  --color-primary-hover: #1d4ed8;
+  --color-text: #14243a;
+  --color-text-muted: #5b6b80;
+  --color-border: #e2e8f0;
+  --color-safe: #16a34a;
+  --color-safe-bg: #eaf7ef;
+  --color-warning: #d97706;
+  --color-warning-bg: #fdf3e3;
+  --color-critical: #dc2626;
+  --color-critical-bg: #fdecec;
+  --color-incomplete: #6b7280;
+  --color-incomplete-bg: #f1f5f9;
+  --color-info-bg: #eaf1fe;
+
   --radius-card: 12px;
-  --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.08);
+  --radius-control: 8px;
+  --shadow-card: 0 1px 3px rgba(16, 43, 78, 0.08);
+  --shadow-modal: 0 12px 40px rgba(16, 43, 78, 0.22);
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  --font-size-sm: 0.8125rem;
+  --font-size-base: 0.9375rem;
+  --font-size-lg: 1.125rem;
+  --font-size-xl: 1.5rem;
+
+  --sidebar-width: 232px;
+  --topbar-height: 60px;
 }
 
 * {
   box-sizing: border-box;
 }
 
+html,
 body {
   margin: 0;
+  padding: 0;
+}
+
+body {
   font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  font-size: var(--font-size-base);
+  line-height: 1.5;
   background: var(--color-bg);
   color: var(--color-text);
 }
 
-/* Temporary placeholder layout for the Phase 1 skeleton. */
-.placeholder {
-  max-width: 640px;
-  margin: 15vh auto;
-  padding: 2rem;
-  background: var(--color-surface);
-  border-radius: var(--radius-card);
-  box-shadow: var(--shadow-card);
-  text-align: center;
+h1,
+h2,
+h3 {
+  line-height: 1.25;
+  margin: 0;
 }
 
-.placeholder h1 {
-  color: var(--color-sidebar);
-  margin-bottom: 0.25rem;
-}
-
-.placeholder .status {
-  color: var(--color-text-muted);
-}
-
-.placeholder a {
+a {
   color: var(--color-primary);
+}
+
+/* Visible keyboard focus for accessibility. */
+:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
 }

@@ -10,9 +10,10 @@
 - **Step 4 (inventory ledger service): ✅ COMPLETE** (commit `8283161`)
 - **Safeguards (D27/D28/D29): ✅ COMPLETE** — correction-vs-newer-reconciliation
   guard, idempotency-payload conflict detection, deferred BEGIN for reads.
-- **Step 5 (supplier & ingredient admin): ✅ COMPLETE** — awaiting user approval
-  to commit and start Step 6.
-- Steps 6–8: not started (see checklist below).
+- **Step 5 (supplier & ingredient admin): ✅ COMPLETE** (commit `d57b34f`)
+- **Step 6 (frontend dashboard): ✅ COMPLETE** — 92 backend + 5 Node tests
+  passing; awaiting user approval to commit and start Step 7.
+- Steps 7–8: not started (see checklist below).
 
 Phase 0 was approved with three final requirements, now reflected in the docs:
 D15 (SQLite-safe concurrency: `BEGIN IMMEDIATE` + atomic conditional UPDATE +
@@ -26,7 +27,7 @@ junction row; service validates supplier `active` status).
 | Phase | Scope | Status |
 |-------|-------|--------|
 | 0 | Planning, architecture, docs (incl. review revision) | ✅ Done (commit `e53898d`) |
-| 1 | Inventory MVP: DB, auth, ingredients, **basic supplier CRUD + assignment**, dual stock entry, ledger, dashboard, confidence timestamps | 🔶 Steps 1–5 of 8 done |
+| 1 | Inventory MVP: DB, auth, ingredients, **basic supplier CRUD + assignment**, dual stock entry, ledger, dashboard, confidence timestamps | 🔶 Steps 1–6 of 8 done |
 | 2 | Supplier schedule rules, delivery calendars, cutoff engine, purchase orders, delivery confirmation, supplier reminders (engine part), alternative-supplier ordering | ⬜ Not started |
 | 3 | Demand forecasting, forecast calendar, status colors, order suggestions, confidence indicators | ⬜ Not started |
 | 4 | Scheduled reminders, in-app notifications, preferences, provider routing | ⬜ Not started |
@@ -148,11 +149,37 @@ junction row; service validates supplier `active` status).
    - `tests/test_catalog.py` — 20 tests incl. archive guard flow
      (reassign → archive → reactivate), historical junction preservation,
      opening-balance ledger verification, RBAC, audit logging
-6. **Frontend** ⬜
-   - Pages: Login, Dashboard, Inventory list, Daily Stock Entry (mode
-     toggle), Ingredient admin (primary-supplier dropdown), Supplier admin,
-     Transaction history
-7. **Tests (pytest) — ✅ covered incrementally in steps 2–5 (82 passing)**
+6. **Frontend — ✅ DONE (2026-11-10), 92 backend + 5 Node tests passing**
+   - Hash-routed SPA, classic scripts, no build step (Capacitor-friendly, D1)
+   - Design system per spec: `#F7F9FC` bg, `#102B4E` sidebar, solid colors,
+     soft shadows, responsive tables → cards <720px, collapsible sidebar
+     <900px, 44px touch targets, visible focus states
+   - Pages: Login (loading/errors), Dashboard (4 stat cards, stock warnings,
+     recent transactions, Record Stock CTA), Inventory (search/category/
+     status filters, availability + SEPARATE confidence badges), Daily Stock
+     Entry (Used/Remaining toggle, exact integer-millisecond preview,
+     idempotency key per logical submission + reuse on retry, submit lock,
+     large-adjustment confirm dialog, admin negative override), Suppliers
+     (CRUD modals, detail with linked ingredients, archive guard error
+     surfacing), Ingredients (CRUD with unit dropdown via new GET /units,
+     primary + alternative suppliers, opening quantity at creation only),
+     History (filters, previous/resulting balances, correction workflow with
+     D27 warning), Settings (account, business config from /health, admin
+     user management)
+   - Role-aware UI (admin-only controls hidden for staff; server RBAC is the
+     real enforcement); all dynamic rendering via textContent/createElement
+   - New backend endpoint: `GET /api/v1/units` (read-only reference data for
+     the ingredient form)
+   - `tests/test_frontend.py` — 10 API-level integration tests: static asset
+     serving, units auth, dashboard data flow, used→remaining entry flow,
+     idempotent retry, large-adjustment confirmation, logout expiry, admin
+     user creation flow. **No browser/DOM automation available — rendered-UI
+     behavior is NOT covered by automated tests.**
+   - `frontend/tests/ui.test.js` — 5 Node unit tests for exact quantity math
+     (`toMillis`/`fromMillis`/`formatQty`, used/remaining preview math)
+   - Live smoke test passed: uvicorn serving index + assets, real login,
+     stock data, units endpoint
+7. **Tests (pytest) — ✅ covered incrementally in steps 2–6 (92 passing)**
    - Ledger math both modes; reconciliation ≠ consumption ✅
    - **Concurrent stock entries** (parallel same-ingredient submissions →
      exact final balance) ✅
@@ -171,3 +198,8 @@ junction row; service validates supplier `active` status).
 - PostgreSQL target is design-only until deployment phase.
 - External notification channels (email, LINE, push) are provider stubs until Phase 4.
 - Open-order check in the supplier archive guard becomes active in Phase 2.
+- **No browser/DOM test automation** (no Node in WSL; Windows Node runs unit
+  tests only). UI interactions are verified via API-level integration tests
+  and `node --check`; a manual browser pass is recommended before Phase 2.
+- Supplier edit form cannot clear optional text fields to empty (PATCH
+  treats empty as "no change") — cosmetic limitation, tracked for later.
