@@ -41,11 +41,22 @@ def create_db_engine(database_url: str) -> Engine:
 
         @event.listens_for(engine, "connect")
         def _set_sqlite_pragmas(dbapi_connection, _connection_record):
+            # Autocommit at the DBAPI level: SQLAlchemy (and our "begin"
+            # listener below) controls transactions explicitly.
+            dbapi_connection.isolation_level = None
             cursor = dbapi_connection.cursor()
             cursor.execute("PRAGMA journal_mode=WAL")    # readers don't block writers (D15)
             cursor.execute("PRAGMA busy_timeout=30000")  # wait for locks instead of erroring
             cursor.execute("PRAGMA foreign_keys=ON")     # enforce FK constraints (D24)
             cursor.close()
+
+        @event.listens_for(engine, "begin")
+        def _begin_immediate(connection):
+            # D15: every transaction acquires the SQLite write lock up front
+            # (BEGIN IMMEDIATE) instead of starting as a reader and risking a
+            # deadlock when upgrading. This — not SELECT FOR UPDATE, which
+            # SQLite lacks — is what makes concurrent stock entries safe.
+            connection.exec_driver_sql("BEGIN IMMEDIATE")
 
     return engine
 

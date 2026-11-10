@@ -6,9 +6,10 @@
 ## Where the project is
 
 - **Current phase:** Phase 1 — Inventory MVP.
-- **Progress:** Step 1 (`a9de3bc`), Step 2 (`c9e72ae`), and Step 3
-  (authentication & RBAC — **37/37 tests passing**) are complete.
-  **Awaiting user approval before Step 4** (inventory ledger service).
+- **Progress:** Steps 1–4 complete — skeleton (`a9de3bc`), database
+  (`c9e72ae`), auth & RBAC (`9aa5966`), inventory ledger service
+  (**56/56 tests passing**, uncommitted at time of writing).
+  **Awaiting user approval before Step 5** (supplier & ingredient admin APIs).
 - Development happens **incrementally, one step at a time** — never implement
   multiple Phase 1 steps without explicit user approval.
 
@@ -105,6 +106,27 @@
   - Gotcha: SQLite returns naive datetimes — `sessions._as_utc` normalizes
     before comparing expiries. Reuse that helper if you compare stored
     datetimes.
+- **Phase 1 Step 4** (uncommitted at time of writing — commit after user review):
+  - `app/services/inventory.py` — THE ledger. All stock changes go through
+    `record_stock_entry` / `correct_transaction` / `repair_ledger` only.
+    Never update `current_quantity` anywhere else.
+  - `app/database.py` — engine `begin` event issues `BEGIN IMMEDIATE` and
+    the DBAPI connection is set to autocommit (`isolation_level = None`) so
+    SQLAlchemy controls transactions. Don't bypass this when creating engines.
+  - Concurrency model (D15): BEGIN IMMEDIATE serializes all writers on
+    SQLite; the conditional UPDATE's WHERE guard is defense-in-depth;
+    bounded retries (3×, 50/100/150 ms) handle residual lock errors.
+  - Corrections: append-only; delta = intended − recorded (recomputed from
+    the original mode and its historical balance); prevented twice via the
+    `supersedes_id` lookup inside the same write transaction; staff may
+    correct only their own entries, admins any.
+  - `large_adjustment_threshold` setting (default 500) triggers
+    `confirmation_required` until the client re-submits `confirmed=true`.
+  - API quantities are serialized as strings — parse with Decimal, never
+    float, when adding client or server code.
+  - `tests/test_inventory.py` gotcha: each role needs its OWN TestClient
+    (shared clients share the cookie jar — see `make_client` fixture).
+  - Test count: 56/56 passing.
 
 ## Key rules for all agents
 
@@ -122,22 +144,21 @@
 
 ## Pending decisions (waiting on user)
 
-- Approval to commit Phase 1 Step 3 and start Step 4 (inventory ledger service).
+- Approval to commit Phase 1 Step 4 and start Step 5 (supplier & ingredient
+  admin APIs).
 
 ## Recommended next task
 
-**Phase 1, Step 4** per `docs/PROJECT_STATUS.md`: the inventory ledger
-service — `POST /api/v1/inventory/entries` implementing both entry modes with
-the atomic write protocol (ARCHITECTURE.md §5.1: idempotency →
-`BEGIN IMMEDIATE` → atomic conditional UPDATE with rowcount check → guards →
-ledger row, bounded retries, D15), transaction history endpoint, corrections,
-and the ledger verify/repair function.
+**Phase 1, Step 5** per `docs/PROJECT_STATUS.md`: supplier CRUD +
+archive/reactivate with guards, ingredient admin endpoints with primary +
+alternative supplier assignment (D19/D24), audit logging.
 
 ## Git
 
 - `e53898d` — "Finalize StockMate Phase 0 architecture" (docs).
 - `a9de3bc` — "Add StockMate backend foundation and health checks" (Step 1).
 - `c9e72ae` — "Add database models, migrations, and demo seed data" (Step 2).
-- Phase 1 Step 3 files are uncommitted, awaiting the user's commit approval.
-- Suggested message: "Add authentication, sessions, and role-based access control".
+- `9aa5966` — "Add authentication, sessions, and role-based access control" (Step 3).
+- Phase 1 Step 4 files are uncommitted, awaiting the user's commit approval.
+- Suggested message: "Add inventory ledger with dual stock entry and corrections".
 - **Do not push or merge without explicit user approval.**

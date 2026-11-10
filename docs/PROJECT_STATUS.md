@@ -6,8 +6,9 @@
 
 - **Step 1 (skeleton): ✅ COMPLETE** (commit `a9de3bc`)
 - **Step 2 (database models + migrations + seed): ✅ COMPLETE** (commit `c9e72ae`)
-- **Step 3 (auth & RBAC): ✅ COMPLETE** — awaiting user approval to start Step 4.
-- Steps 4–8: not started (see checklist below).
+- **Step 3 (auth & RBAC): ✅ COMPLETE** (commit `9aa5966`)
+- **Step 4 (inventory ledger service): ✅ COMPLETE** — awaiting user approval to start Step 5.
+- Steps 5–8: not started (see checklist below).
 
 Phase 0 was approved with three final requirements, now reflected in the docs:
 D15 (SQLite-safe concurrency: `BEGIN IMMEDIATE` + atomic conditional UPDATE +
@@ -90,14 +91,33 @@ junction row; service validates supplier `active` status).
      list/create, CSRF reject/accept/cross-session, weak password → 400,
      duplicate → 409, rate limit → 429, Argon2 round-trip, Secure flag
    - Live smoke test passed (login → me → staff 403 → logout → 401)
-4. **Inventory service (the ledger, D2/D3/D6/D14/D15)** ⬜
-   - `POST /api/v1/inventory/entries`: idempotency check → `BEGIN IMMEDIATE`
-     → delta → atomic conditional UPDATE (rowcount = 1) → negative guard →
-     large-adjustment confirmation → ledger row + stock-state update in one
-     transaction → bounded retries on busy
-   - Transaction history endpoint with filters
-   - Correction entries (`supersedes_id`)
-   - Ledger replay verify/repair service function (admin/debug)
+4. **Inventory service (the ledger, D2/D3/D6/D14/D15) — ✅ DONE (2026-11-10), 56/56 tests passing**
+   - `app/services/inventory.py`: `record_stock_entry` (both modes),
+     `correct_transaction` (append-only corrections with double-correction
+     prevention and own-entry/admin authorization), `verify_ledger` (cache
+     vs SUM(deltas) per ingredient), `repair_ledger` (admin, audited, never
+     touches the ledger; sets discrepancy flag + confidence=low)
+   - Atomic write protocol: `BEGIN IMMEDIATE` for every SQLite transaction
+     (engine event in `app/database.py` + DBAPI autocommit), atomic
+     conditional UPDATE with rowcount check, bounded retries (3×) on lock
+     errors — NO `SELECT FOR UPDATE` (D15)
+   - Guards: active ingredient, Decimal(14,3) via schema, non-negative
+     unless admin `allow_negative`, `confirmation_required` above
+     `large_adjustment_threshold` (default 500, server-validated), validated
+     reason set, idempotency pre-check + unique-constraint race handling
+   - Reconciliation updates `last_counted_at`/`last_counted_by` + confidence
+     → high; consumption does NOT (D3)
+   - `app/services/business_time.py` — business-date derivation honoring
+     timezone + configurable day boundary (D18)
+   - Endpoints: `GET /inventory/stock`, `POST /inventory/entries`,
+     `GET /inventory/transactions` (filters), `POST .../{id}/correct`,
+     `GET /inventory/verify`, `POST /inventory/verify/repair`
+   - Quantities serialized as strings in API responses (exact decimals)
+   - `tests/test_inventory.py` — 19 tests incl. REAL concurrency: 8 parallel
+     "used 5" submissions via ThreadPoolExecutor → exact final balance,
+     8 ledger rows, no lost updates
+   - README now documents production security risks (demo credentials, dev
+     secret, HTTPS cookies, per-process limiter, XSS)
 5. **Supplier & ingredient management (admin, D19/D22/D24)** ⬜
    - CRUD + archive/reactivate endpoints with archive-guard warnings
    - `GET /api/v1/suppliers/{id}/ingredients`

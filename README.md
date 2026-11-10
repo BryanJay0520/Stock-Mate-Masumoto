@@ -90,6 +90,24 @@ cd /mnt/c/Users/bryan/Projects/StockMate/backend
 
 The password is typed hidden, strength-checked, and never printed or logged.
 
+## Production security checklist
+
+The development setup is intentionally convenient and **must never reach
+production unchanged**. Before any public deployment (tracked in Phase 6):
+
+- **Demo accounts** — `admin`/`demo-admin-password` and `staff`/`demo-staff-password`
+  exist ONLY for local development. Never seed them into a production database;
+  create real accounts via `python -m app.cli create-admin`.
+- **Development secret key** — the default `secret_key` in `app/config.py` is
+  publicly known. Production must set `STOCKMATE_SECRET_KEY` to a long random value.
+- **HTTPS** — set `STOCKMATE_SECURE_COOKIES=true` so session cookies carry the
+  `Secure` flag, and serve the app behind HTTPS only.
+- **Login rate limiter** — currently per-process (decision D26). It must move
+  to a shared store if more than one backend worker ever runs.
+- **XSS surface** — the frontend must keep rendering API data via
+  `textContent`/escaping only (never `innerHTML`); CSP headers must be
+  configured at deployment.
+
 ## Data disclaimer
 
 All seed/demo data is explicitly fictional and must never be treated as real restaurant inventory.

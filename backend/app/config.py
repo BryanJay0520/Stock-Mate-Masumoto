@@ -5,6 +5,7 @@ local ``.env`` file, so no secret ever lives in the source code (decision D12).
 Sensible defaults are provided for local development only.
 """
 
+from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
 
@@ -44,6 +45,10 @@ class Settings(BaseSettings):
     secure_cookies: bool = False  # set True behind HTTPS in production
     login_rate_limit_attempts: int = 5
     login_rate_limit_window_seconds: int = 600
+
+    # Inventory (Phase 1 Step 4). Adjustments whose absolute delta exceeds
+    # this many units require the server-validated confirmed=true flag.
+    large_adjustment_threshold: Decimal = Decimal("500")
 
     # Directory with the static frontend served by FastAPI.
     static_dir: Path = PROJECT_ROOT / "frontend"
