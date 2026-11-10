@@ -189,3 +189,51 @@ Failed logins are limited (default 5 per 10 minutes per username+client)
 using an in-memory sliding window. Acceptable because the MVP runs a single
 process; if we ever scale to multiple workers, the limiter moves to a shared
 store (e.g. the database or Redis) — same interface.
+
+## D27 — Corrections may not override a newer physical count
+
+A correction targets a specific past transaction. If a NEWER `reconciliation`
+(a real physical count, Mode A) already exists for that ingredient, the
+physical count is the best-known truth and rewriting history underneath it
+would silently invalidate it. `correct_transaction` therefore rejects such
+corrections with HTTP 409 (`correction_after_reconciliation`). To fix stock
+in that situation, staff record a new reconciliation instead. Corrections of
+transactions newer than the last physical count remain allowed.
+
+## D28 — Idempotency-key reuse with a different payload is a conflict
+
+Replaying an idempotency key with the SAME request returns the original
+result (safe retries). Replaying it with a DIFFERENT payload returns HTTP 409
+(`idempotency_conflict`) rather than silently returning an unrelated original
+transaction. Payloads are compared semantically (parsed decimals, not raw
+strings). The check runs both on the pre-check path and on the unique-
+constraint race path, for stock entries and corrections alike. No schema
+change was needed.
+
+## D29 — BEGIN IMMEDIATE only for write-intent transactions (SQLite)
+
+SQLite has no row locks / `SELECT FOR UPDATE`, so stock writes use
+`BEGIN IMMEDIATE` to take the write lock up front (D15). To keep ordinary
+read-only requests from needlessly blocking other writers, the engine's
+`begin` event emits `BEGIN IMMEDIATE` only when a thread-local write-intent
+flag is set (by the ledger/catalog services at the start of a write
+transaction); otherwise a plain deferred `BEGIN` is used. Sessions are
+created with `isolation_level=None` (autocommit at the DBAPI level) so the
+listener controls the BEGIN mode. A probe test asserts reads stay deferred
+and writes use IMMEDIATE, alongside the concurrency tests.
+
+## D30 — Junction sync order: add links, move primary, remove links
+
+Because of the composite FK (D24), reassigning suppliers must happen in this
+exact order inside one transaction: (1) insert missing junction rows,
+(2) update `ingredients.primary_supplier_id`, (3) delete junction rows no
+longer assigned. Any other order either points the primary at a nonexistent
+junction row or deletes a row the primary still references. Implemented in
+`app/services/catalog.py::_sync_junction`.
+
+## D31 — Sessions keep loaded objects after commit; services refresh
+
+The session factory uses `expire_on_commit=False` (predictable state in
+tests, no surprise lazy loads). Services that modify relationship collections
+inside an atomic block (e.g. supplier junction rows) call `db.refresh(obj)`
+after the commit so API responses serialize fresh data.

@@ -65,6 +65,7 @@ class Ingredient(TimestampMixin, Base):
         String(20), default=STATUS_ACTIVE, nullable=False, index=True
     )
 
+    unit: Mapped["Unit"] = relationship(lazy="joined")
     stock_state: Mapped["IngredientStockState"] = relationship(
         back_populates="ingredient", cascade="all, delete-orphan", uselist=False
     )

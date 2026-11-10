@@ -6,10 +6,11 @@
 ## Where the project is
 
 - **Current phase:** Phase 1 — Inventory MVP.
-- **Progress:** Steps 1–4 complete — skeleton (`a9de3bc`), database
-  (`c9e72ae`), auth & RBAC (`9aa5966`), inventory ledger service
-  (**56/56 tests passing**, uncommitted at time of writing).
-  **Awaiting user approval before Step 5** (supplier & ingredient admin APIs).
+- **Progress:** Steps 1–5 complete — skeleton (`a9de3bc`), database
+  (`c9e72ae`), auth & RBAC (`9aa5966`), inventory ledger (`8283161`),
+  safeguards D27–D29 + supplier/ingredient admin (**82/82 tests passing**,
+  uncommitted at time of writing).
+  **Awaiting user approval to commit Step 5 and start Step 6** (frontend pages).
 - Development happens **incrementally, one step at a time** — never implement
   multiple Phase 1 steps without explicit user approval.
 
@@ -33,7 +34,7 @@
 ## Read these before doing anything
 
 1. `docs/ARCHITECTURE.md` — full architecture, database schema, business logic.
-2. `docs/DECISIONS.md` — binding decisions D1–D24. Supersede, never silently
+2. `docs/DECISIONS.md` — binding decisions D1–D31. Supersede, never silently
    change. (Renumbered during the Phase 0 revision — cite current text.)
 3. `docs/PROJECT_STATUS.md` — roadmap + the ordered Phase 1 checklist with
    per-step status.
@@ -127,6 +128,41 @@
   - `tests/test_inventory.py` gotcha: each role needs its OWN TestClient
     (shared clients share the cookie jar — see `make_client` fixture).
   - Test count: 56/56 passing.
+- **Phase 1 Step 5** (uncommitted at time of writing — commit after user review):
+  - **Safeguards first** (`tests/test_safeguards.py`, 6 tests; decisions
+    D27/D28/D29): corrections are rejected with 409
+    `correction_after_reconciliation` when a NEWER physical reconciliation
+    exists for that ingredient; idempotency-key reuse with a different
+    payload → 409 `idempotency_conflict` (semantic comparison via
+    `_entry_matches` in `app/services/inventory.py`, checked on both the
+    pre-check and unique-constraint race paths); read-only requests use
+    deferred `BEGIN` while write paths use `BEGIN IMMEDIATE`, driven by a
+    thread-local write-intent flag in `app/database.py`
+    (`set_write_intent` / `_begin_write_transaction`).
+    **Gotcha:** SQLAlchemy 2.1 made `Session.execution_options` a property,
+    so the flag is thread-local, not session options. The flag is cleared in
+    `_run_atomic`'s `finally` and on every early return path.
+  - `app/schemas/catalog.py`, `app/services/catalog.py`,
+    `app/api/v1/routes/suppliers.py`, `app/api/v1/routes/ingredients.py`:
+    supplier CRUD/archive/reactivate with the archive guard (409
+    `archive_blocked` when primary of an ACTIVE ingredient); ingredient CRUD
+    with primary + alternative suppliers; `opening_quantity` becomes an
+    `opening_balance` ledger entry atomically (D23); audit rows on every
+    mutation. Staff have read-only access; mutations are admin + CSRF.
+  - **Gotchas:**
+    - Junction updates must be ordered add-links → set `primary_supplier_id`
+      → remove-links inside one transaction (`_sync_junction`, D30) or the
+      composite FK (D24) fails.
+    - `expire_on_commit=False`: call `db.refresh(obj)` after `_run_atomic`
+      when response serialization reads relationship collections (D31).
+    - `Ingredient.unit` relationship (`lazy="joined"`) exists for the unit
+      abbreviation in API responses — ORM-only, no migration needed.
+    - The catalog service reuses the PRIVATE helpers `_begin_write_transaction`
+      / `_run_atomic` from `app.services.inventory` on purpose — if those
+      change, update both modules.
+    - Error body shape is `{"error": {"code", "message"}}`.
+    - `POST /inventory/entries` returns 200 (also for fresh entries) — no 201.
+  - `tests/test_catalog.py` — 20 tests. **82/82 passing.**
 
 ## Key rules for all agents
 
@@ -144,14 +180,14 @@
 
 ## Pending decisions (waiting on user)
 
-- Approval to commit Phase 1 Step 4 and start Step 5 (supplier & ingredient
-  admin APIs).
+- Approval to commit Phase 1 Step 5 (safeguards + supplier/ingredient admin)
+  and start Step 6 (frontend pages).
 
 ## Recommended next task
 
-**Phase 1, Step 5** per `docs/PROJECT_STATUS.md`: supplier CRUD +
-archive/reactivate with guards, ingredient admin endpoints with primary +
-alternative supplier assignment (D19/D24), audit logging.
+**Phase 1, Step 6** per `docs/PROJECT_STATUS.md`: frontend pages — Login,
+Dashboard, Inventory list, Daily Stock Entry (mode toggle), Ingredient admin
+(primary-supplier dropdown), Supplier admin, Transaction history.
 
 ## Git
 
@@ -159,6 +195,7 @@ alternative supplier assignment (D19/D24), audit logging.
 - `a9de3bc` — "Add StockMate backend foundation and health checks" (Step 1).
 - `c9e72ae` — "Add database models, migrations, and demo seed data" (Step 2).
 - `9aa5966` — "Add authentication, sessions, and role-based access control" (Step 3).
-- Phase 1 Step 4 files are uncommitted, awaiting the user's commit approval.
-- Suggested message: "Add inventory ledger with dual stock entry and corrections".
+- `8283161` — "Add inventory ledger with dual stock entry and corrections" (Step 4).
+- Phase 1 Step 5 files are uncommitted, awaiting the user's commit approval.
+- Suggested message: "Add supplier and ingredient administration APIs".
 - **Do not push or merge without explicit user approval.**

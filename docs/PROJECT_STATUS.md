@@ -7,8 +7,12 @@
 - **Step 1 (skeleton): ✅ COMPLETE** (commit `a9de3bc`)
 - **Step 2 (database models + migrations + seed): ✅ COMPLETE** (commit `c9e72ae`)
 - **Step 3 (auth & RBAC): ✅ COMPLETE** (commit `9aa5966`)
-- **Step 4 (inventory ledger service): ✅ COMPLETE** — awaiting user approval to start Step 5.
-- Steps 5–8: not started (see checklist below).
+- **Step 4 (inventory ledger service): ✅ COMPLETE** (commit `8283161`)
+- **Safeguards (D27/D28/D29): ✅ COMPLETE** — correction-vs-newer-reconciliation
+  guard, idempotency-payload conflict detection, deferred BEGIN for reads.
+- **Step 5 (supplier & ingredient admin): ✅ COMPLETE** — awaiting user approval
+  to commit and start Step 6.
+- Steps 6–8: not started (see checklist below).
 
 Phase 0 was approved with three final requirements, now reflected in the docs:
 D15 (SQLite-safe concurrency: `BEGIN IMMEDIATE` + atomic conditional UPDATE +
@@ -22,7 +26,7 @@ junction row; service validates supplier `active` status).
 | Phase | Scope | Status |
 |-------|-------|--------|
 | 0 | Planning, architecture, docs (incl. review revision) | ✅ Done (commit `e53898d`) |
-| 1 | Inventory MVP: DB, auth, ingredients, **basic supplier CRUD + assignment**, dual stock entry, ledger, dashboard, confidence timestamps | 🔶 Step 1 of 8 done |
+| 1 | Inventory MVP: DB, auth, ingredients, **basic supplier CRUD + assignment**, dual stock entry, ledger, dashboard, confidence timestamps | 🔶 Steps 1–5 of 8 done |
 | 2 | Supplier schedule rules, delivery calendars, cutoff engine, purchase orders, delivery confirmation, supplier reminders (engine part), alternative-supplier ordering | ⬜ Not started |
 | 3 | Demand forecasting, forecast calendar, status colors, order suggestions, confidence indicators | ⬜ Not started |
 | 4 | Scheduled reminders, in-app notifications, preferences, provider routing | ⬜ Not started |
@@ -118,23 +122,43 @@ junction row; service validates supplier `active` status).
      8 ledger rows, no lost updates
    - README now documents production security risks (demo credentials, dev
      secret, HTTPS cookies, per-process limiter, XSS)
-5. **Supplier & ingredient management (admin, D19/D22/D24)** ⬜
-   - CRUD + archive/reactivate endpoints with archive-guard warnings
-   - `GET /api/v1/suppliers/{id}/ingredients`
-   - Ingredient create/edit accepts `primarySupplierId` +
-     `alternativeSupplierIds`; service enforces active-supplier status
-   - Audit logging on all admin mutations
+5. **Supplier & ingredient management (admin, D19/D22/D24) — ✅ DONE (2026-11-10), 82/82 tests passing**
+   - Safeguards landed first (D27/D28/D29, `tests/test_safeguards.py`, 6 tests):
+     corrections blocked after a newer reconciliation (409
+     `correction_after_reconciliation`); idempotency-key reuse with a
+     different payload → 409 `idempotency_conflict` (semantic payload
+     comparison, both pre-check and race paths); read-only requests use
+     deferred `BEGIN`, writes `BEGIN IMMEDIATE` via a thread-local
+     write-intent flag (probe test proves both)
+   - `app/schemas/catalog.py` + `app/services/catalog.py`: supplier CRUD,
+     archive guard (409 `archive_blocked` listing blocking active
+     ingredients), reactivate; ingredient CRUD with `opening_quantity` →
+     `opening_balance` ledger entry atomically (D23); supplier-set validation
+     (exist + active); junction sync in FK-safe order add→move-primary→remove
+     (D30); `db.refresh` after commit because `expire_on_commit=False` (D31);
+     audit log rows on every mutation
+   - Routes: `GET/POST /suppliers`, `GET/PATCH /suppliers/{id}`,
+     `POST /suppliers/{id}/archive|reactivate`, `GET/POST /ingredients`,
+     `GET/PATCH /ingredients/{id}`, `POST /ingredients/{id}/archive|restore`
+     (staff read-only; mutations admin-only + CSRF)
+   - Ingredient PATCH schemas contain NO stock fields (D14); stray
+     `current_quantity` in a request body is ignored (tested)
+   - `Ingredient.unit` ORM relationship added (lazy="joined") for unit
+     abbreviations in API responses — no schema change
+   - `tests/test_catalog.py` — 20 tests incl. archive guard flow
+     (reassign → archive → reactivate), historical junction preservation,
+     opening-balance ledger verification, RBAC, audit logging
 6. **Frontend** ⬜
    - Pages: Login, Dashboard, Inventory list, Daily Stock Entry (mode
      toggle), Ingredient admin (primary-supplier dropdown), Supplier admin,
      Transaction history
-7. **Tests (pytest)** ⬜
-   - Ledger math both modes; reconciliation ≠ consumption
+7. **Tests (pytest) — ✅ covered incrementally in steps 2–5 (82 passing)**
+   - Ledger math both modes; reconciliation ≠ consumption ✅
    - **Concurrent stock entries** (parallel same-ingredient submissions →
-     exact final balance)
-   - Idempotency, negative guard + override, large-adjustment flow
+     exact final balance) ✅
+   - Idempotency, negative guard + override, large-adjustment flow ✅
    - Auth/CSRF, RBAC, supplier archive guards, junction integrity (D24),
-     opening-balance reconstruction from ledger (D23)
+     opening-balance reconstruction from ledger (D23) ✅
 8. **Docs update** ⬜ — this file, AGENT_HANDOFF.md, README
 
 ## Known limitations / open items

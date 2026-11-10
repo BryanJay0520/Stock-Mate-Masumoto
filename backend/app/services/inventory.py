@@ -38,6 +38,7 @@ from app.models.inventory import (
     TYPE_RECONCILIATION,
 )
 from app.models.user import ROLE_ADMIN
+from app.database import set_write_intent
 from app.services.business_time import business_date_for, parse_day_start
 
 MAX_QUANTITY = Decimal("1000000")
@@ -45,6 +46,50 @@ MAX_RETRIES = 3
 
 # Adjustment reasons accepted for stock entries and corrections.
 ENTRY_REASONS = {"daily_count", "spoilage", "damage", "recount"}
+
+
+def _begin_write_transaction(db: Session) -> None:
+    """Mark the request's write transaction as write-intent (D15/D29).
+
+    Authentication/CSRF dependencies already ran read queries, which started
+    a DEFERRED read transaction. Close it (harmless — nothing was written)
+    and flag the current thread so the engine begins the next transaction as
+    BEGIN IMMEDIATE, serializing stock writers. Ordinary read-only requests
+    never set the flag and never take a write lock. Callers MUST clear the
+    flag (see the try/finally in each public function).
+    """
+    if db.get_bind().dialect.name == "sqlite":
+        db.rollback()
+        set_write_intent(True)
+
+
+def _entry_matches(
+    transaction: InventoryTransaction,
+    *,
+    ingredient_id: int,
+    mode: str,
+    quantity: Decimal,
+    reason: str | None,
+) -> bool:
+    """Safeguard: a replayed idempotency key must carry the SAME payload."""
+    if transaction.mode != mode or transaction.reason != reason:
+        return False
+    if transaction.ingredient_id != ingredient_id:
+        return False
+    if mode == MODE_USED:
+        return transaction.quantity_delta == -quantity
+    return transaction.resulting_quantity == quantity  # remaining = absolute count
+
+
+def _corrected_quantity_of(
+    correction: InventoryTransaction, original: InventoryTransaction
+) -> Decimal:
+    """Re-derive the corrected quantity a correction row represents."""
+    new_delta = original.quantity_delta + correction.quantity_delta
+    if original.mode == MODE_USED:
+        return -new_delta
+    balance_before = original.resulting_quantity - original.quantity_delta
+    return new_delta + balance_before
 
 
 def _now() -> datetime:
@@ -110,25 +155,31 @@ def _apply_balance_update(
 
 
 def _run_atomic(db: Session, work):
-    """Run ``work()`` inside one transaction with bounded lock retries (D15)."""
-    for attempt in range(MAX_RETRIES):
-        try:
-            result = work()
-            db.commit()
-            return result
-        except OperationalError as exc:
-            db.rollback()
-            if "locked" in str(exc).lower() and attempt < MAX_RETRIES - 1:
-                time.sleep(0.05 * (attempt + 1))
-                continue
-            raise ApiError(
-                503, "database_busy",
-                "The database is busy. Please try again.",
-            )
-        except Exception:
-            db.rollback()
-            raise
-    raise ApiError(503, "database_busy", "The database is busy. Please try again.")
+    """Run ``work()`` inside one transaction with bounded lock retries (D15).
+
+    Always clears the thread's write-intent flag on exit (D29).
+    """
+    try:
+        for attempt in range(MAX_RETRIES):
+            try:
+                result = work()
+                db.commit()
+                return result
+            except OperationalError as exc:
+                db.rollback()
+                if "locked" in str(exc).lower() and attempt < MAX_RETRIES - 1:
+                    time.sleep(0.05 * (attempt + 1))
+                    continue
+                raise ApiError(
+                    503, "database_busy",
+                    "The database is busy. Please try again.",
+                )
+            except Exception:
+                db.rollback()
+                raise
+        raise ApiError(503, "database_busy", "The database is busy. Please try again.")
+    finally:
+        set_write_intent(False)
 
 
 def record_stock_entry(
@@ -156,9 +207,22 @@ def record_stock_entry(
     if reason is not None and reason not in ENTRY_REASONS:
         raise ApiError(400, "invalid_reason", f"Reason must be one of: {sorted(ENTRY_REASONS)}.")
 
-    # Replay check first: a retry returns the ORIGINAL result unchanged (D6).
+    _begin_write_transaction(db)
+
+    # Replay check first: a retry returns the ORIGINAL result unchanged (D6) —
+    # but ONLY when the payload is identical. The same key with a DIFFERENT
+    # payload is a client bug and must be rejected loudly (D28).
     existing = _find_by_idempotency_key(db, idempotency_key)
     if existing is not None:
+        set_write_intent(False)  # replay path exits before _run_atomic
+        if not _entry_matches(
+            existing, ingredient_id=ingredient_id, mode=mode,
+            quantity=quantity, reason=reason,
+        ):
+            raise ApiError(
+                409, "idempotency_conflict",
+                "This idempotency key was already used with a different request.",
+            )
         return existing, True
 
     effective_allow_negative = allow_negative and user.role == ROLE_ADMIN
@@ -227,6 +291,14 @@ def record_stock_entry(
         # Lost an idempotency race: another request inserted the same key.
         existing = _find_by_idempotency_key(db, idempotency_key)
         if existing is not None:
+            if not _entry_matches(
+                existing, ingredient_id=ingredient_id, mode=mode,
+                quantity=quantity, reason=reason,
+            ):
+                raise ApiError(
+                    409, "idempotency_conflict",
+                    "This idempotency key was already used with a different request.",
+                )
             return existing, True
         raise
 
@@ -253,8 +325,22 @@ def correct_transaction(
     if not reason:
         raise ApiError(400, "invalid_reason", "A correction reason is required.")
 
+    _begin_write_transaction(db)
+
     existing = _find_by_idempotency_key(db, idempotency_key)
     if existing is not None:
+        set_write_intent(False)  # replay path exits before _run_atomic
+        original = db.get(InventoryTransaction, transaction_id)
+        if (
+            original is None
+            or existing.supersedes_id != original.id
+            or existing.reason != reason
+            or _corrected_quantity_of(existing, original) != corrected_quantity
+        ):
+            raise ApiError(
+                409, "idempotency_conflict",
+                "This idempotency key was already used with a different request.",
+            )
         return existing, True
 
     now = _now()
@@ -282,6 +368,25 @@ def correct_transaction(
             raise ApiError(
                 409, "already_corrected",
                 f"This entry was already corrected by transaction #{already.id}.",
+            )
+        # D27: a newer physical count has already verified reality. Adjusting
+        # for an older mistake would silently corrupt that verified balance,
+        # so the correction must be refused instead.
+        newer_reconciliation = db.scalar(
+            select(InventoryTransaction)
+            .where(
+                InventoryTransaction.ingredient_id == original.ingredient_id,
+                InventoryTransaction.id > original.id,
+                InventoryTransaction.type == TYPE_RECONCILIATION,
+            )
+            .limit(1)
+        )
+        if newer_reconciliation is not None:
+            raise ApiError(
+                409, "correction_after_reconciliation",
+                f"A newer physical count (transaction "
+                f"#{newer_reconciliation.id}) already verified this stock. "
+                "Correct the count itself instead of the older entry.",
             )
 
         old_delta = original.quantity_delta
@@ -337,6 +442,17 @@ def correct_transaction(
     except IntegrityError:
         existing = _find_by_idempotency_key(db, idempotency_key)
         if existing is not None:
+            original = db.get(InventoryTransaction, transaction_id)
+            if (
+                original is None
+                or existing.supersedes_id != original.id
+                or existing.reason != reason
+                or _corrected_quantity_of(existing, original) != corrected_quantity
+            ):
+                raise ApiError(
+                    409, "idempotency_conflict",
+                    "This idempotency key was already used with a different request.",
+                )
             return existing, True
         raise
 
@@ -375,35 +491,39 @@ def repair_ledger(db: Session, *, admin: User) -> dict:
     Never touches the ledger itself. Every repaired row is flagged
     (unresolved_discrepancy, confidence → low) and audit-logged.
     """
-    report = verify_ledger(db)
-    drifted = [row for row in report if not row["consistent"]]
-    now = _now()
+    _begin_write_transaction(db)
+    try:
+        report = verify_ledger(db)
+        drifted = [row for row in report if not row["consistent"]]
+        now = _now()
 
-    def work() -> list[int]:
-        repaired = []
-        for row in drifted:
-            state = db.get(IngredientStockState, row["ingredient_id"])
-            before = str(state.current_quantity)
-            state.current_quantity = row["ledger_balance"]
-            state.unresolved_discrepancy = True
-            state.confidence = "low"
-            state.version += 1
-            db.add(AuditLog(
-                user_id=admin.id,
-                action="ledger.repair",
-                entity_type="ingredient_stock_state",
-                entity_id=state.ingredient_id,
-                before_json=f'{{"current_quantity": "{before}"}}',
-                after_json=f'{{"current_quantity": "{row["ledger_balance"]}"}}',
-                created_at=now,
-            ))
-            repaired.append(state.ingredient_id)
-        return repaired
+        def work() -> list[int]:
+            repaired = []
+            for row in drifted:
+                state = db.get(IngredientStockState, row["ingredient_id"])
+                before = str(state.current_quantity)
+                state.current_quantity = row["ledger_balance"]
+                state.unresolved_discrepancy = True
+                state.confidence = "low"
+                state.version += 1
+                db.add(AuditLog(
+                    user_id=admin.id,
+                    action="ledger.repair",
+                    entity_type="ingredient_stock_state",
+                    entity_id=state.ingredient_id,
+                    before_json=f'{{"current_quantity": "{before}"}}',
+                    after_json=f'{{"current_quantity": "{row["ledger_balance"]}"}}',
+                    created_at=now,
+                ))
+                repaired.append(state.ingredient_id)
+            return repaired
 
-    repaired_ids = _run_atomic(db, work) if drifted else []
-    return {
-        "checked": len(report),
-        "drifted": len(drifted),
-        "repaired_ingredient_ids": repaired_ids,
-        "repaired_at": now,
-    }
+        repaired_ids = _run_atomic(db, work) if drifted else []
+        return {
+            "checked": len(report),
+            "drifted": len(drifted),
+            "repaired_ingredient_ids": repaired_ids,
+            "repaired_at": now,
+        }
+    finally:
+        set_write_intent(False)
