@@ -16,6 +16,7 @@ SM.app = {
   },
   defaultRoute: "dashboard",
   shellReady: false,
+  _navToken: 0,
 
   boot() {
     document.getElementById("logout-button").addEventListener("click", async () => {
@@ -103,16 +104,30 @@ SM.app = {
 
     const view = SM.ui.clear(document.getElementById("view"));
     view.append(SM.ui.loading());
+
+    // Render into an off-DOM staging node: if a newer navigation starts while
+    // this one is still awaiting data, the stale render must never touch the
+    // live view (otherwise the two pages interleave into a torn render).
+    const token = ++this._navToken;
+    const stage = document.createElement("div");
+    let failed = null;
     try {
-      await page.render(view);
+      await page.render(stage);
     } catch (error) {
-      SM.ui.clear(view).append(
-        SM.ui.alert(error.message || "This page could not be loaded. Please try again."),
+      failed = error;
+    }
+    if (token !== this._navToken) return; // superseded by a newer navigation
+    SM.ui.clear(view);
+    if (failed) {
+      view.append(
+        SM.ui.alert(failed.message || "This page could not be loaded. Please try again."),
         SM.ui.el("button", {
           class: "btn btn--secondary", text: "Retry",
           onclick: () => this.navigate(),
         })
       );
+    } else {
+      view.append(...[...stage.childNodes]);
     }
   },
 };

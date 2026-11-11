@@ -21,6 +21,9 @@ from app.models.mixins import TimestampMixin
 STATUS_ACTIVE = "active"
 STATUS_ARCHIVED = "archived"
 
+# Preferred contact method for general ordering instructions (Phase 2 Step 1).
+CONTACT_METHODS = ("phone", "line", "email", "website", "other")
+
 
 class Supplier(TimestampMixin, Base):
     """Archived, never deleted: historical orders must keep their supplier."""
@@ -31,6 +34,12 @@ class Supplier(TimestampMixin, Base):
             f"status IN ('{STATUS_ACTIVE}', '{STATUS_ARCHIVED}')",
             name="ck_suppliers_status",
         ),
+        CheckConstraint(
+            "contact_method IS NULL OR contact_method IN ("
+            + ", ".join(f"'{m}'" for m in CONTACT_METHODS)
+            + ")",
+            name="ck_suppliers_contact_method",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -39,10 +48,20 @@ class Supplier(TimestampMixin, Base):
     phone: Mapped[str | None] = mapped_column(String(40), nullable=True)
     email: Mapped[str | None] = mapped_column(String(200), nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # General ordering instructions (Phase 2 Step 1, D34).
+    contact_method: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    ordering_url: Mapped[str | None] = mapped_column(String(300), nullable=True)
+    ordering_procedures: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(20), default=STATUS_ACTIVE, nullable=False)
 
     ingredient_links: Mapped[list["SupplierIngredient"]] = relationship(
         back_populates="supplier", cascade="all, delete-orphan"
+    )
+    schedule_rules: Mapped[list["SupplierScheduleRule"]] = relationship(  # noqa: F821
+        back_populates="supplier"
+    )
+    calendar_exceptions: Mapped[list["SupplierCalendarException"]] = relationship(  # noqa: F821
+        back_populates="supplier"
     )
 
 

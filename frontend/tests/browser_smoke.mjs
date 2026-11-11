@@ -324,10 +324,11 @@ async function supplierTests() {
   });
 
   await test("archive is blocked for a primary supplier, with the reason shown", async () => {
+    // Buttons are matched by TEXT (their order changes as features grow).
     await evaluate(`(() => {
-      [...document.querySelectorAll("#view tbody tr")]
-        .find(r => r.textContent.includes("Tokyo Noodle Co."))
-        .querySelectorAll("button")[2].click(); // Archive
+      const row = [...document.querySelectorAll("#view tbody tr")]
+        .find(r => r.textContent.includes("Tokyo Noodle Co."));
+      [...row.querySelectorAll("button")].find(b => b.textContent === "Archive").click();
     })()`);
     await waitFor(`document.querySelector(".modal-overlay")`);
     await evaluate(`[...document.querySelectorAll(".modal-overlay button")].find(b => b.textContent === "Archive").click()`);
@@ -351,6 +352,131 @@ async function supplierTests() {
     await waitFor(`document.querySelector(".modal-overlay")`);
     await evaluate(`[...document.querySelectorAll(".modal-overlay button")].find(b => b.textContent === "Reactivate").click()`);
     await waitFor(`document.getElementById("toasts").textContent.includes("Supplier reactivated")`);
+  });
+}
+
+async function scheduleTests() {
+  // The schedules panel is a modal; forms open a SECOND modal on top, so
+  // form interactions always target the last overlay.
+  const overlay = `[...document.querySelectorAll(".modal-overlay")].pop()`;
+
+  await test("admin sees seeded rules, instructions, and real opportunities", async () => {
+    await navigate("/suppliers");
+    await waitFor(`document.querySelectorAll("#view tbody tr").length >= 3`);
+    await evaluate(`(() => {
+      const row = [...document.querySelectorAll("#view tbody tr")]
+        .find(r => r.textContent.includes("Tokyo Noodle Co."));
+      [...row.querySelectorAll("button")].find(b => b.textContent === "Schedules").click();
+    })()`);
+    await waitFor(`document.querySelector(".modal-overlay")?.textContent.includes("Delivery Schedule Rules")`);
+    // Three seeded rules: Mon + Fri supplier-wide, Wed for Korean Noodles.
+    await assertText(".modal-overlay", "Korean Noodles only");
+    await assertText(".modal-overlay", "Monday");
+    await assertText(".modal-overlay", "Friday");
+    // General instructions and per-schedule special instructions.
+    await assertText(".modal-overlay", "Preferred: Phone Call");
+    await assertText(".modal-overlay", "Sunday morning");
+    // Upcoming opportunities carry real calendar dates and UTC-derived cutoffs.
+    const oppText = await evaluate(`(() => {
+      const heading = [...document.querySelectorAll(".modal-overlay h3")]
+        .find(h => h.textContent.includes("Upcoming Deliveries"));
+      return heading ? heading.parentElement.textContent : "";
+    })()`);
+    assert(oppText.includes("order before"), "no cutoff shown in opportunities");
+    assert(/\d{4}/.test(oppText), `no real calendar date in opportunities: ${oppText.slice(0, 200)}`);
+    await screenshot("schedules-panel");
+  });
+
+  await test("admin can add a delivery schedule through the panel", async () => {
+    await evaluate(`${overlay}.remove()`); // close the Tokyo panel
+    await evaluate(`(() => {
+      const row = [...document.querySelectorAll("#view tbody tr")]
+        .find(r => r.textContent.includes("Browser Test Foods"));
+      [...row.querySelectorAll("button")].find(b => b.textContent === "Schedules").click();
+    })()`);
+    // The modal title matches immediately; wait until the BODY has loaded
+    // (the Add button only exists after the async panel render).
+    await waitFor(`(() => {
+      const o = [...document.querySelectorAll(".modal-overlay")].pop();
+      return o && [...o.querySelectorAll("button")].some(b => b.textContent === "Add Delivery Schedule");
+    })()`);
+    await evaluate(`(() => {
+      [...${overlay}.querySelectorAll("button")].find(b => b.textContent === "Add Delivery Schedule").click();
+    })()`);
+    await waitFor(`document.getElementById("rule-weekday")`);
+    await evaluate(`(() => {
+      document.getElementById("rule-weekday").value = "6"; // Sunday
+      document.getElementById("rule-cutoffDays").value = "1";
+      document.getElementById("rule-cutoffTime").value = "09:00";
+      document.getElementById("rule-reminderDays").value = "2";
+      document.getElementById("rule-reminderTime").value = "18:30";
+      [...${overlay}.querySelectorAll("button")].find(b => b.textContent === "Add Schedule").click();
+    })()`);
+    await waitFor(`document.getElementById("toasts").textContent.includes("Schedule added")`);
+    // The panel reloaded: the new Sunday rule and a matching opportunity appear.
+    await waitFor(`(() => {
+      const panel = document.querySelector(".modal-overlay");
+      return panel && panel.textContent.includes("Sunday");
+    })()`);
+    const oppText = await evaluate(`(() => {
+      const heading = [...document.querySelectorAll(".modal-overlay h3")]
+        .find(h => h.textContent.includes("Upcoming Deliveries"));
+      return heading ? heading.parentElement.textContent : "";
+    })()`);
+    assert(oppText.includes("Sunday"), `new rule missing from opportunities: ${oppText.slice(0, 200)}`);
+    await evaluate(`${overlay}.remove()`);
+  });
+
+  await test("schedule validation errors are shown in the form", async () => {
+    await evaluate(`(() => {
+      const row = [...document.querySelectorAll("#view tbody tr")]
+        .find(r => r.textContent.includes("Browser Test Foods"));
+      [...row.querySelectorAll("button")].find(b => b.textContent === "Schedules").click();
+    })()`);
+    await waitFor(`document.querySelector(".modal-overlay")?.textContent.includes("Add Delivery Schedule")`);
+    await evaluate(`(() => {
+      [...${overlay}.querySelectorAll("button")].find(b => b.textContent === "Add Delivery Schedule").click();
+    })()`);
+    await waitFor(`document.getElementById("rule-weekday")`);
+    // Sunday already exists for this supplier -> the server must reject it.
+    await evaluate(`(() => {
+      document.getElementById("rule-weekday").value = "6";
+      document.getElementById("rule-cutoffDays").value = "2";
+      document.getElementById("rule-cutoffTime").value = "10:00";
+      [...${overlay}.querySelectorAll("button")].find(b => b.textContent === "Add Schedule").click();
+    })()`);
+    await waitFor(`(() => {
+      const form = ${overlay};
+      return form.querySelector(".alert--error") !== null;
+    })()`);
+    const errorText = await evaluate(`(() => {
+      return ${overlay}.querySelector(".alert--error")?.textContent || "";
+    })()`);
+    assert(errorText.includes("already exists"), `expected conflict error, got: ${errorText}`);
+    await evaluate(`${overlay}.remove()`); // close form
+    await evaluate(`${overlay}.remove()`); // close panel
+  });
+}
+
+async function staffScheduleTests() {
+  await test("staff sees schedules read-only", async () => {
+    await login(STAFF); // staffTests ended with a cleared session
+    await navigate("/suppliers");
+    await waitFor(`document.querySelector("#view").textContent.includes("Read-only access")`);
+    await evaluate(`(() => {
+      const row = [...document.querySelectorAll("#view tbody tr")]
+        .find(r => r.textContent.includes("Tokyo Noodle Co."));
+      [...row.querySelectorAll("button")].find(b => b.textContent === "Schedules").click();
+    })()`);
+    await waitFor(`document.querySelector(".modal-overlay")?.textContent.includes("Delivery Schedule Rules")`);
+    await assertText(".modal-overlay", "Korean Noodles only");
+    const adminControls = await evaluate(`(() => {
+      const panel = document.querySelector(".modal-overlay");
+      const labels = [...panel.querySelectorAll("button")].map(b => b.textContent);
+      return labels.some(l => ["Add Delivery Schedule", "Edit", "Deactivate", "Add Exception"].includes(l));
+    })()`);
+    assert(!adminControls, "staff should not see schedule mutation controls");
+    await evaluate(`document.querySelector(".modal-overlay").remove()`);
   });
 }
 
@@ -508,10 +634,12 @@ try {
   await authTests();
   await inventoryTests();
   await supplierTests();
+  await scheduleTests();
   await ingredientTests();
   await correctionTests();
   await responsiveTests();
   await staffTests();
+  await staffScheduleTests();
 } catch (error) {
   console.error("HARNESS ERROR:", error);
   results.push({ name: "harness", status: "FAIL", error: String(error) });

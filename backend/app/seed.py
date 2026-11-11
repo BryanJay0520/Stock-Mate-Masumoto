@@ -16,11 +16,12 @@ Run as a CLI from the backend directory:
 """
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, time, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 from argon2 import PasswordHasher
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import Settings, get_settings
@@ -31,11 +32,13 @@ from app.models import (
     InventoryTransaction,
     Supplier,
     SupplierIngredient,
+    SupplierScheduleRule,
     Unit,
     User,
 )
 
 SEED_MARKER_KEY = "demo_data_seeded"
+SCHEDULE_SEED_MARKER_KEY = "demo_schedules_seeded"
 
 # Dev-only credentials for the fictional demo accounts. NOT secrets — local
 # development convenience only; real deployments must create their own users.
@@ -88,6 +91,145 @@ DEMO_UNITS = [
     ("Sheet", "sht"),
     ("Piece", "pc"),
 ]
+
+# General ordering instructions per supplier (Phase 2 Step 1).
+DEMO_SUPPLIER_INSTRUCTIONS = {
+    "Tokyo Noodle Co.": {
+        "contact_method": "phone",
+        "ordering_procedures": (
+            "Call the supplier for urgent order changes. Orders after the "
+            "cutoff require phone confirmation."
+        ),
+    },
+    "Dragon Noodle Works": {
+        "contact_method": "email",
+        "ordering_url": "https://orders.dragon-noodle.example",
+        "ordering_procedures": (
+            "Order by email or via the ordering portal before the cutoff."
+        ),
+    },
+    "Masumoto Provisions": {
+        "contact_method": "line",
+        "ordering_procedures": "Send orders via LINE before the cutoff.",
+    },
+}
+
+# Weekly delivery schedules (fictional examples from the requirements).
+# weekday: 0=Mon..6=Sun; offsets are days BEFORE the delivery date.
+# Tokyo Noodle Co. demonstrates the ingredient-override model (D32): the
+# shared days (Mon/Fri) are supplier-wide rules, while the Wednesday
+# delivery applies only to Korean Noodles — Soup Base, Green Onions and
+# Menma effectively get Monday/Friday only.
+DEMO_SCHEDULES = {
+    "Tokyo Noodle Co.": [
+        {
+            "delivery_weekday": 0,  # Monday
+            "order_cutoff_days_before": 1, "order_cutoff_time": time(14, 30),
+            "reminder_days_before": 2, "reminder_time": time(21, 30),
+            "contact_action": "call",
+            "contact_deadline_days_before": 1, "contact_deadline_time": time(10, 0),
+            "contact_required": True,
+            "special_instructions": (
+                "Call the supplier on Sunday morning to confirm quantities."
+            ),
+        },
+        {
+            "delivery_weekday": 4,  # Friday
+            "order_cutoff_days_before": 1, "order_cutoff_time": time(14, 30),
+            "reminder_days_before": 2, "reminder_time": time(21, 30),
+            "contact_action": "line",
+            "contact_deadline_days_before": 1, "contact_deadline_time": time(12, 0),
+            "contact_required": False,
+            "special_instructions": (
+                "Confirm availability on LINE before submitting the order."
+            ),
+        },
+        {
+            "delivery_weekday": 2,  # Wednesday — Korean Noodles only
+            "ingredient_name": "Korean Noodles",
+            "order_cutoff_days_before": 1, "order_cutoff_time": time(14, 30),
+            "reminder_days_before": 2, "reminder_time": time(21, 30),
+            "contact_action": "call",
+            "contact_deadline_days_before": 1, "contact_deadline_time": time(11, 0),
+            "contact_required": True,
+            "special_instructions": (
+                "Call the supplier on Tuesday before 11:00 to confirm "
+                "noodle quantities."
+            ),
+        },
+    ],
+    "Dragon Noodle Works": [
+        {
+            "delivery_weekday": 1,  # Tuesday
+            "order_cutoff_days_before": 1, "order_cutoff_time": time(12, 0),
+            "reminder_days_before": 1, "reminder_time": time(9, 0),
+        },
+        {
+            "delivery_weekday": 3,  # Thursday
+            "order_cutoff_days_before": 1, "order_cutoff_time": time(12, 0),
+            "reminder_days_before": 1, "reminder_time": time(9, 0),
+        },
+    ],
+    "Masumoto Provisions": [
+        {
+            "delivery_weekday": 2,  # Wednesday
+            "order_cutoff_days_before": 2, "order_cutoff_time": time(17, 0),
+            "reminder_days_before": 3, "reminder_time": time(20, 0),
+        },
+        {
+            "delivery_weekday": 5,  # Saturday
+            "order_cutoff_days_before": 2, "order_cutoff_time": time(17, 0),
+            "reminder_days_before": 2, "reminder_time": time(20, 0),
+        },
+    ],
+}
+
+
+def seed_demo_schedules(session: Session) -> dict:
+    """Insert fictional supplier schedules. Safe to call repeatedly.
+
+    Uses its own marker so databases seeded before Phase 2 Step 1 pick up
+    the schedules on the next seed run without touching inventory data.
+    """
+    marker = session.get(AppSetting, SCHEDULE_SEED_MARKER_KEY)
+    if marker is not None:
+        return {"seeded": False, "reason": "demo schedules already present"}
+
+    suppliers = {
+        supplier.name: supplier
+        for supplier in session.scalars(select(Supplier)).all()
+    }
+    ingredients = {
+        ingredient.name: ingredient
+        for ingredient in session.scalars(select(Ingredient)).all()
+    }
+    rule_count = 0
+    for supplier_name, rules in DEMO_SCHEDULES.items():
+        supplier = suppliers.get(supplier_name)
+        if supplier is None:
+            continue  # existing DBs may have renamed demo suppliers
+        instructions = DEMO_SUPPLIER_INSTRUCTIONS[supplier_name]
+        for field, value in instructions.items():
+            setattr(supplier, field, value)
+        for rule_data in rules:
+            rule_data = dict(rule_data)
+            ingredient_name = rule_data.pop("ingredient_name", None)
+            ingredient = ingredients.get(ingredient_name) if ingredient_name else None
+            session.add(SupplierScheduleRule(
+                supplier_id=supplier.id,
+                ingredient_id=ingredient.id if ingredient else None,
+                timezone="Asia/Tokyo",
+                is_active=True,
+                **rule_data,
+            ))
+            rule_count += 1
+
+    session.add(AppSetting(
+        key=SCHEDULE_SEED_MARKER_KEY,
+        value_json=json.dumps({"version": 1, "note": FICTION_NOTE}),
+    ))
+    session.commit()
+    return {"seeded": True, "schedule_rules": rule_count}
 
 
 def seed_demo_data(session: Session, settings: Settings) -> dict:
@@ -191,6 +333,9 @@ def seed_demo_data(session: Session, settings: Settings) -> dict:
     ))
     session.commit()
 
+    # Schedules have their own marker; this runs once on fresh databases.
+    schedule_summary = seed_demo_schedules(session)
+
     return {
         "seeded": True,
         "users": 2,
@@ -198,6 +343,7 @@ def seed_demo_data(session: Session, settings: Settings) -> dict:
         "suppliers": len(suppliers),
         "ingredients": ingredient_count,
         "opening_balance_transactions": ingredient_count,
+        "schedule_rules": schedule_summary.get("schedule_rules", 0),
     }
 
 
@@ -213,8 +359,11 @@ def main() -> None:
     session_factory = create_session_factory(engine)
     with session_factory() as session:
         summary = seed_demo_data(session, settings)
+        # Also covers databases seeded before supplier scheduling existed.
+        schedule_summary = seed_demo_schedules(session)
 
     print("StockMate demo seed:", summary)
+    print("StockMate schedule seed:", schedule_summary)
     if summary["seeded"]:
         print(f"Demo login (dev only): admin / {DEMO_ADMIN_PASSWORD}")
         print(f"                       staff / {DEMO_STAFF_PASSWORD}")

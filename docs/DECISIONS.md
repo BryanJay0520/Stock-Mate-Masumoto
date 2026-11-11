@@ -237,3 +237,48 @@ The session factory uses `expire_on_commit=False` (predictable state in
 tests, no surprise lazy loads). Services that modify relationship collections
 inside an atomic block (e.g. supplier junction rows) call `db.refresh(obj)`
 after the commit so API responses serialize fresh data.
+
+## D32 — Ingredient schedule overrides are additive, not replacements
+
+A schedule rule with `ingredient_id NULL` applies to every ingredient the
+supplier provides. A rule WITH `ingredient_id` is an ADDITIVE override that
+applies only to that ingredient. Exclusion ("Soup Base gets Mon/Fri only
+while Korean Noodles gets Mon/Wed/Fri") is modeled by keeping the shared
+days on supplier-wide rules and putting the extra day on an ingredient
+rule — never by subtracting days from a shared rule. This keeps every rule
+self-contained: no priority/override resolution order is needed at read
+time. Ingredient rules require an existing `supplier_ingredients` junction
+row (validated server-side).
+
+## D33 — Opportunity statuses exclude "covered" until purchase orders exist
+
+Computed statuses are `upcoming` (order window not open yet), `open`
+(window open, inclusive cutoff not passed), `cutoff_reached`, `missed`
+(delivery date in the past), and `unavailable_holiday` (blocked by an
+exception). A `covered` status is deliberately NOT implemented in Phase 2
+Step 1: nothing may claim a deadline is covered by an order until the
+purchase order system (Phase 2 Step 2) can prove it. Statuses are computed
+on read, never stored.
+
+## D34 — Calendar exceptions are date-specific rows; weekly rules are never rewritten
+
+Holidays, one-off cancellations, moved cutoffs, and extra deliveries are
+rows in `supplier_calendar_exceptions` keyed by concrete date, applied by
+the scheduling engine at read time. Exceptions never edit the weekly rules,
+so removing (deactivating) an exception always restores the normal schedule
+exactly. Types: `delivery_cancelled`, `ordering_suspended` (both block the
+cycle), `cutoff_override` (replaces one cutoff with `override_cutoff_at`),
+`extra_delivery` (adds a one-time delivery with its own cutoff). One
+exception per (supplier, date, type); deactivation preferred over deletion.
+
+## D35 — Cutoffs use a days-before offset (1–6), never same-day
+
+Ordering cutoffs are stored as `order_cutoff_days_before` (1–6 days) plus a
+local time in the rule's timezone. Offset 0 (same-day cutoff) is rejected as
+ambiguous with respect to the delivery-day boundary, and 7+ would blur the
+"which week" question the data model must answer unambiguously. The engine
+converts (delivery date − offset, local time, rule timezone) into a UTC
+instant; the inclusive-cutoff rule (D16) applies to that instant. Contact
+deadlines and reminders use the same representation (0–13 days; a reminder
+must land strictly before the cutoff, a contact deadline strictly before
+the delivery day).

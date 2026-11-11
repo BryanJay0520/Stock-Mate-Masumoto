@@ -8,8 +8,11 @@ creation, which becomes an ``opening_balance`` ledger entry (D23).
 
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer
+
+ContactMethod = Literal["phone", "line", "email", "website", "other"]
 
 
 def _ser_decimal(value: Decimal | None) -> str | None:
@@ -22,6 +25,9 @@ class SupplierIn(BaseModel):
     phone: str | None = Field(default=None, max_length=40)
     email: str | None = Field(default=None, max_length=200)
     notes: str | None = None
+    contact_method: ContactMethod | None = None
+    ordering_url: str | None = Field(default=None, max_length=300)
+    ordering_procedures: str | None = None
 
 
 class SupplierUpdate(BaseModel):
@@ -30,6 +36,9 @@ class SupplierUpdate(BaseModel):
     phone: str | None = Field(default=None, max_length=40)
     email: str | None = Field(default=None, max_length=200)
     notes: str | None = None
+    contact_method: ContactMethod | None = None
+    ordering_url: str | None = Field(default=None, max_length=300)
+    ordering_procedures: str | None = None
 
 
 class SupplierOut(BaseModel):
@@ -41,6 +50,9 @@ class SupplierOut(BaseModel):
     phone: str | None
     email: str | None
     notes: str | None
+    contact_method: ContactMethod | None
+    ordering_url: str | None
+    ordering_procedures: str | None
     status: str
     created_at: datetime
 

@@ -65,6 +65,9 @@ def _supplier_snapshot(supplier: Supplier) -> dict:
         "phone": supplier.phone,
         "email": supplier.email,
         "notes": supplier.notes,
+        "contact_method": supplier.contact_method,
+        "ordering_url": supplier.ordering_url,
+        "ordering_procedures": supplier.ordering_procedures,
         "status": supplier.status,
     }
 
@@ -96,6 +99,9 @@ def create_supplier(db: Session, *, admin: User, data) -> Supplier:
             phone=data.phone,
             email=data.email,
             notes=data.notes,
+            contact_method=data.contact_method,
+            ordering_url=data.ordering_url,
+            ordering_procedures=data.ordering_procedures,
             status="active",
         )
         db.add(supplier)
@@ -123,6 +129,10 @@ def update_supplier(db: Session, *, admin: User, supplier_id: int, data) -> Supp
             value = getattr(data, field)
             if value is not None:
                 setattr(supplier, field, value)
+        # Contact-instruction fields support explicit clearing via null.
+        for field in ("contact_method", "ordering_url", "ordering_procedures"):
+            if field in data.model_fields_set:
+                setattr(supplier, field, getattr(data, field))
         _audit(db, admin, "supplier.update", "supplier", supplier.id, before,
                _supplier_snapshot(supplier))
         return supplier

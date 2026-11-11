@@ -105,6 +105,38 @@ SM.ui = {
     return date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
   },
 
+  // Format a UTC instant in a specific IANA timezone (schedule rules store
+  // their own timezone, so display must not depend on the browser's).
+  formatInTz(iso, timeZone) {
+    if (!iso) return "—";
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return "—";
+    const options = {
+      year: "numeric", month: "short", day: "numeric",
+      hour: "2-digit", minute: "2-digit",
+    };
+    if (timeZone) {
+      options.timeZone = timeZone;
+      options.timeZoneName = "short";
+    }
+    try {
+      return date.toLocaleString(undefined, options);
+    } catch (_error) {
+      return date.toLocaleString(undefined); // unknown timezone: fall back
+    }
+  },
+
+  // Format a local calendar date ("2026-11-16") without timezone shifting.
+  formatDateOnly(isoDate, weekday) {
+    if (!isoDate) return "—";
+    const [year, month, day] = isoDate.split("-").map(Number);
+    const date = new Date(Date.UTC(year, month - 1, day));
+    const text = date.toLocaleDateString(undefined, {
+      year: "numeric", month: "short", day: "numeric", timeZone: "UTC",
+    });
+    return weekday ? `${weekday}, ${text}` : text;
+  },
+
   // Client-side preview math uses integer thousandths to avoid float errors.
   // The backend remains authoritative; this is informational only (D4).
   toMillis(value) {

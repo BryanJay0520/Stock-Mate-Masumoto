@@ -5,15 +5,14 @@
 
 ## Where the project is
 
-- **Current phase:** Phase 1 — Inventory MVP (functionally complete).
-- **Progress:** Steps 1–7 complete — skeleton (`a9de3bc`), database
-  (`c9e72ae`), auth & RBAC (`9aa5966`), inventory ledger (`8283161`),
-  supplier/ingredient admin (`d57b34f`), frontend dashboard (`c1fa23e`),
-  integration testing & stabilization (**92 backend + 5 Node unit +
-  24/24 real browser tests passing**, uncommitted at time of writing).
-  **Awaiting user approval to commit Step 7; Phase 2 has NOT started.**
+- **Current phase:** Phase 2 — Supplier Scheduling & Ordering.
+- **Progress:** Phase 1 complete (through `a67d07e`). Phase 2 Step 1
+  (supplier delivery scheduling) is **implemented and fully tested —
+  128 backend + 5 Node unit + 28/28 real browser tests passing**,
+  uncommitted at time of writing. **Awaiting user approval to commit;
+  Phase 2 Step 2 (purchase orders) has NOT started.**
 - Development happens **incrementally, one step at a time** — never implement
-  multiple Phase 1 steps without explicit user approval.
+  multiple steps without explicit user approval.
 
 ## Environment (important!)
 
@@ -35,7 +34,7 @@
 ## Read these before doing anything
 
 1. `docs/ARCHITECTURE.md` — full architecture, database schema, business logic.
-2. `docs/DECISIONS.md` — binding decisions D1–D31. Supersede, never silently
+2. `docs/DECISIONS.md` — binding decisions D1–D35. Supersede, never silently
    change. (Renumbered during the Phase 0 revision — cite current text.)
 3. `docs/PROJECT_STATUS.md` — roadmap + the ordered Phase 1 checklist with
    per-step status.
@@ -223,12 +222,67 @@
     cookies, per-process rate limit, backups, structured logging, and
     security headers are all Phase 6 items. NOT deployment-ready.
   - Totals: 92 backend + 5 Node unit + 24 browser = 121 checks passing.
+- **Phase 2 Step 1** (uncommitted at time of writing — commit after user review):
+  - `app/models/scheduling.py` — `SupplierScheduleRule` (weekly delivery
+    rule: weekday, cutoff offset 1–6 days + local time, optional order-open
+    window, reminder, per-rule timezone, additive ingredient override (D32),
+    structured contact action, special instructions) and
+    `SupplierCalendarException` (date-specific, D34). Duplicate ACTIVE rules
+    are blocked by service check (409 `conflicting_rule`) AND two partial
+    unique indexes (`sqlite_where`/`postgresql_where`) — the drift-guard
+    accepts them because both sides declare the same WHERE clause.
+  - `Supplier` gained `contact_method` / `ordering_url` /
+    `ordering_procedures` (general instructions); migration
+    `0002_supplier_scheduling.py` adds them via `batch_alter_table`.
+  - `app/services/scheduling.py` — validation + CRUD + the engine
+    `compute_opportunities(db, supplier_id, now_utc, horizon_days)`:
+    `now_utc` is injectable for pinned-clock tests. Statuses per D33
+    (`upcoming`/`open`/`cutoff_reached`/`missed`/`unavailable_holiday`;
+    NO `covered` until purchase orders exist). Cutoff is inclusive (D16):
+    `now == cutoff` ⇒ `open`. Rules store local wall-clock times; the engine
+    converts (delivery date − offset, time, rule tz) to UTC instants.
+  - Routes `app/api/v1/routes/schedules.py`: `/suppliers/{id}/schedules`,
+    `/suppliers/{id}/exceptions`, `/suppliers/{id}/opportunities`,
+    `/schedules/{id}` (PATCH, deactivate/reactivate),
+    `/exceptions/{id}` (same), `/ordering/opportunities` (all suppliers).
+    Staff read; admin mutates with CSRF; audit-logged.
+  - `app/seed.py` — `seed_demo_schedules()` with its OWN marker
+    (`demo_schedules_seeded`) so pre-existing dev DBs pick schedules up on
+    the next `python -m app.seed` without touching inventory. Tokyo Noodle
+    models the §9 override example additively: Mon+Fri supplier-wide, Wed
+    for Korean Noodles only.
+  - Frontend `js/pages/supplier-schedules.js` (`SM.schedulesUI`) — wide
+    modal from the Suppliers page "Schedules" button: general instructions,
+    upcoming opportunities (real dates, tz-formatted via new
+    `SM.ui.formatInTz`/`formatDateOnly`), rule table + form, exceptions
+    table + form. Staff read-only. Supplier form gained the three contact
+    fields (explicit null clears them on PATCH).
+  - **Real bug fixed by browser testing:** the hash router rendered pages
+    directly into `#view` while `await`ing, so two overlapping navigations
+    tore the page (title "Suppliers" over dashboard content). `app.js`
+    `navigate()` now renders into an off-DOM staging node with a navigation
+    token and swaps only if still current.
+  - **Gotchas:**
+    - Pydantic v2: a model field named exactly like its type
+      (`date: date | None = None`) breaks class-body evaluation — alias the
+      import (`from datetime import date as date_cls`) in that case.
+    - Browser tests: match row buttons by TEXT, never index (new buttons
+      shift indexes); when a test opens a modal whose body loads async,
+      wait for BODY content (a button), not the title which renders first.
+    - The schedules panel modal is `760px` wide via `ui.modal({wide: true})`.
+  - `backend/tests/test_schedules.py` — 36 tests (engine math with pinned
+    clock, inclusive boundary, exceptions, RBAC, validation, audit).
+  - Totals: 128 backend + 5 Node unit + 28 browser = 161 checks passing.
 
 ## Suggested review areas for the next agent (OpenAI Codex)
 
+- `backend/app/services/scheduling.py` — engine math (offsets, timezones,
+  inclusive cutoff), exception application, validation rules.
 - `backend/app/services/inventory.py` — ledger atomicity, D27/D28 semantics.
 - `backend/app/services/catalog.py` — junction sync order (D30), archive guards.
-- `frontend/js/pages/entry.js` — idempotency-key lifecycle and submit locking.
+- `frontend/js/pages/supplier-schedules.js` — schedule/exception forms,
+  safe DOM rendering.
+- `frontend/js/app.js` — navigation token / staging-node race guard.
 - `frontend/tests/browser_smoke.mjs` — extend scenarios when new pages arrive.
 - Production-readiness gaps listed in `docs/PROJECT_STATUS.md` (Phase 6 scope).
 
@@ -248,14 +302,15 @@
 
 ## Pending decisions (waiting on user)
 
-- Approval to commit Phase 1 Step 7 (integration testing & stabilization).
-- Approval to start Phase 2 (supplier schedules, purchase orders) — the
-  Phase 1 checklist item 8 is docs-only and already maintained.
+- Approval to commit Phase 2 Step 1 (supplier delivery scheduling).
+- Approval to start Phase 2 Step 2 (purchase orders, delivery confirmation).
 
 ## Recommended next task
 
-**Phase 2** per `docs/ARCHITECTURE.md`: supplier schedule rules, delivery
-calendars, cutoff engine, purchase orders, delivery confirmation.
+**Phase 2 Step 2** per `docs/ARCHITECTURE.md`: purchase orders (statuses
+draft → ordered → confirmed → partially delivered → delivered → delayed →
+cancelled), order placement tracking, delivery receipts. The opportunities
+engine already exposes `rule_id`/cutoffs to link orders against.
 
 ## Git
 
@@ -266,6 +321,7 @@ calendars, cutoff engine, purchase orders, delivery confirmation.
 - `8283161` — "Add inventory ledger with dual stock entry and corrections" (Step 4).
 - `d57b34f` — "Add supplier and ingredient administration APIs" (Step 5).
 - `c1fa23e` — "Add responsive frontend dashboard and stock entry UI" (Step 6).
-- Phase 1 Step 7 files are uncommitted, awaiting the user's commit approval.
-- Suggested message: "Add browser integration tests and fix UI rendering bugs".
+- `a67d07e` — "Add browser integration tests and fix UI rendering bugs" (Step 7).
+- Phase 2 Step 1 files are uncommitted, awaiting the user's commit approval.
+- Suggested message: "Add supplier delivery scheduling and instructions".
 - **Do not push or merge without explicit user approval.**

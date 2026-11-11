@@ -72,6 +72,10 @@ SM.pages.suppliers = {
           class: "btn btn--secondary btn--small", text: "View",
           onclick: () => this.openDetail(supplier.id),
         }));
+      actions.append(ui.el("button", {
+        class: "btn btn--secondary btn--small", text: "Schedules",
+        onclick: () => SM.schedulesUI.open(supplier, isAdmin),
+      }));
       if (isAdmin) {
         actions.append(ui.el("button", {
           class: "btn btn--secondary btn--small", text: "Edit",
@@ -137,9 +141,13 @@ SM.pages.suppliers = {
         ui.clear(errorArea);
         ui.setBusy(saveButton, true, "Saving…");
         const payload = {};
+        // These support explicit clearing via null on update.
+        const clearable = new Set(["contact_method", "ordering_url", "ordering_procedures"]);
         for (const [key, input] of Object.entries(fields)) {
           const value = input.value.trim();
-          if (editing) {
+          if (editing && clearable.has(key)) {
+            payload[key] = value === "" ? null : value;
+          } else if (editing) {
             if (value !== "") payload[key] = value;
           } else {
             payload[key] = value === "" ? null : value;
@@ -183,6 +191,28 @@ SM.pages.suppliers = {
         ui.el("label", { class: "field__label", for: `supplier-${key}`, text: label }),
         fields[key]));
     }
+    // General ordering instructions (Phase 2 Step 1).
+    const methodSelect = ui.el("select", { class: "select", id: "supplier-contact-method" },
+      ui.el("option", { value: "", text: "—" }),
+      SM.schedulesUI.CONTACT_METHODS.map(([value, label]) => ui.el("option", {
+        value, text: label, selected: supplier ? (supplier.contact_method || "") === value : false,
+      })));
+    form.append(ui.el("div", { class: "field" },
+      ui.el("label", { class: "field__label", for: "supplier-contact-method", text: "Preferred Contact Method" }),
+      methodSelect));
+    fields.contact_method = methodSelect;
+    fields.ordering_url = ui.el("input", {
+      class: "input", id: "supplier-ordering-url", type: "url",
+      value: supplier?.ordering_url || "", maxlength: 300,
+    });
+    form.append(ui.el("div", { class: "field" },
+      ui.el("label", { class: "field__label", for: "supplier-ordering-url", text: "Ordering Website / URL" }),
+      fields.ordering_url));
+    fields.ordering_procedures = ui.el("textarea", { class: "textarea", id: "supplier-ordering-procedures", rows: 3 });
+    fields.ordering_procedures.value = supplier?.ordering_procedures || "";
+    form.append(ui.el("div", { class: "field" },
+      ui.el("label", { class: "field__label", for: "supplier-ordering-procedures", text: "General Ordering Procedures" }),
+      fields.ordering_procedures));
     fields.notes = ui.el("textarea", { class: "textarea", id: "supplier-notes", rows: 3 });
     fields.notes.value = supplier?.notes || "";
     form.append(ui.el("div", { class: "field" },

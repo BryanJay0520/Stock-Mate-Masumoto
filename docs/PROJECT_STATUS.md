@@ -2,7 +2,7 @@
 
 ## Current phase
 
-**Phase 1 — Inventory MVP: IN PROGRESS**
+**Phase 2 — Supplier Scheduling & Ordering: IN PROGRESS** (Phase 1 complete)
 
 - **Step 1 (skeleton): ✅ COMPLETE** (commit `a9de3bc`)
 - **Step 2 (database models + migrations + seed): ✅ COMPLETE** (commit `c9e72ae`)
@@ -12,10 +12,18 @@
   guard, idempotency-payload conflict detection, deferred BEGIN for reads.
 - **Step 5 (supplier & ingredient admin): ✅ COMPLETE** (commit `d57b34f`)
 - **Step 6 (frontend dashboard): ✅ COMPLETE** (commit `c1fa23e`)
-- **Step 7 (integration testing & stabilization): ✅ COMPLETE** — 92 backend +
-  5 Node unit + **24/24 real browser tests** passing; two UI bugs found and
-  fixed. Awaiting user approval to commit.
-- Step 8: not started (see checklist below).
+- **Step 7 (integration testing & stabilization): ✅ COMPLETE** (commit `a67d07e`)
+
+**Phase 2 — Supplier Scheduling & Ordering: IN PROGRESS**
+
+- **Step 1 (supplier delivery scheduling): ✅ COMPLETE, awaiting approval to
+  commit** — per-supplier weekly schedule rules (cutoff offset+time, order
+  window, reminder, contact action, instructions, timezone), additive
+  ingredient overrides (D32), date-specific calendar exceptions (D34),
+  scheduling engine with real tz-aware dates and statuses (D33), supplier
+  general instructions, scheduling UI in the Supplier Management page,
+  **128 backend + 5 Node unit + 28/28 real browser tests passing**.
+  Also fixed a genuine router race (torn render on overlapping navigations).
 
 Phase 0 was approved with three final requirements, now reflected in the docs:
 D15 (SQLite-safe concurrency: `BEGIN IMMEDIATE` + atomic conditional UPDATE +
@@ -30,7 +38,7 @@ junction row; service validates supplier `active` status).
 |-------|-------|--------|
 | 0 | Planning, architecture, docs (incl. review revision) | ✅ Done (commit `e53898d`) |
 | 1 | Inventory MVP: DB, auth, ingredients, **basic supplier CRUD + assignment**, dual stock entry, ledger, dashboard, confidence timestamps | 🔶 Steps 1–7 of 8 done |
-| 2 | Supplier schedule rules, delivery calendars, cutoff engine, purchase orders, delivery confirmation, supplier reminders (engine part), alternative-supplier ordering | ⬜ Not started |
+| 2 | Supplier schedule rules, delivery calendars, cutoff engine, purchase orders, delivery confirmation, supplier reminders (engine part), alternative-supplier ordering | 🔶 Step 1 (scheduling) done, awaiting commit approval |
 | 3 | Demand forecasting, forecast calendar, status colors, order suggestions, confidence indicators | ⬜ Not started |
 | 4 | Scheduled reminders, in-app notifications, preferences, provider routing | ⬜ Not started |
 | 5 | Analytics, reports, CSV export, simple statistics | ⬜ Not started |
@@ -224,8 +232,10 @@ junction row; service validates supplier `active` status).
 - **Browser tests run on Windows Node + Chrome/Edge only** (WSL has no Node).
   They mutate the database: reseed before every full run. Command:
   `node frontend/tests/browser_smoke.mjs` against a seeded server on :8765.
-- Supplier edit form cannot clear optional text fields to empty (PATCH
-  treats empty as "no change") — cosmetic limitation, tracked for later.
+- Supplier edit form: the Phase 2 contact fields (`contact_method`,
+  `ordering_url`, `ordering_procedures`) support explicit clearing via null;
+  the older optional text fields still treat empty as "no change" — cosmetic
+  limitation, tracked for later.
 - Toasts can overlap table content temporarily (cosmetic).
 
 ## Production readiness review (Step 7 — NOT deployment-ready yet)

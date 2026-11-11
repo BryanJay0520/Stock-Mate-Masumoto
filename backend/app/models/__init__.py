@@ -8,6 +8,7 @@ from app.database import Base  # noqa: F401  (re-exported for convenience)
 from app.models.audit import AuditLog
 from app.models.ingredient import Ingredient, IngredientStockState
 from app.models.inventory import InventoryTransaction
+from app.models.scheduling import SupplierCalendarException, SupplierScheduleRule
 from app.models.settings import AppSetting
 from app.models.session import UserSession
 from app.models.supplier import Supplier, SupplierIngredient
@@ -22,7 +23,9 @@ __all__ = [
     "IngredientStockState",
     "InventoryTransaction",
     "Supplier",
+    "SupplierCalendarException",
     "SupplierIngredient",
+    "SupplierScheduleRule",
     "Unit",
     "User",
     "UserSession",
