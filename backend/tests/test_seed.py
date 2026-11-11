@@ -33,7 +33,7 @@ def db(seeded_client, settings):
 
 def test_seed_creates_expected_catalog(db):
     assert db.scalar(select(func.count(User.id))) == 2
-    assert db.scalar(select(func.count(Unit.id))) == 6
+    assert db.scalar(select(func.count(Unit.id))) == 7
     assert db.scalar(select(func.count(Supplier.id))) == 3
     assert db.scalar(select(func.count(Ingredient.id))) == 8
 
@@ -44,8 +44,33 @@ def test_korean_and_chinese_noodles_are_independent(db):
 
     assert korean.id != chinese.id
     assert korean.primary_supplier_id != chinese.primary_supplier_id
-    assert korean.stock_state.current_quantity == Decimal("240")
+    assert korean.stock_state.current_quantity == Decimal("180")
     assert chinese.stock_state.current_quantity == Decimal("180")
+    assert korean.unit.abbreviation == chinese.unit.abbreviation == "pc"
+    assert (korean.count_package_name, korean.count_units_per_package) == ("Box", Decimal("60"))
+
+
+def test_demo_counting_and_supplier_purchasing_packages(db):
+    expected = {
+        "Chinese Noodles": ("pc", "Box", Decimal("50")),
+        "Eggs": ("pc", "Tray", Decimal("30")),
+        "Soup Base": ("pack", "Case", Decimal("10")),
+        "Chashu": ("pc", "Pack", Decimal("20")),
+    }
+    for name, (unit, package, size) in expected.items():
+        ingredient = db.scalar(select(Ingredient).where(Ingredient.name == name))
+        assert ingredient.unit.abbreviation == unit
+        assert ingredient.count_package_enabled is True
+        assert (ingredient.count_package_name, ingredient.count_units_per_package) == (package, size)
+        primary = next(link for link in ingredient.supplier_links
+                       if link.supplier_id == ingredient.primary_supplier_id)
+        assert (primary.purchase_package_name, primary.package_size,
+                primary.whole_packages_only) == (package, size, True)
+
+    korean = db.scalar(select(Ingredient).where(Ingredient.name == "Korean Noodles"))
+    sizes = {link.supplier_id: link.package_size for link in korean.supplier_links}
+    assert sizes[korean.primary_supplier_id] == Decimal("60")
+    assert sorted(sizes.values()) == [Decimal("50"), Decimal("60")]
 
 
 def test_required_supplier_assignments(db):

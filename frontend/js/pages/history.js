@@ -107,7 +107,12 @@ SM.pages.history = {
         ui.el("td", { "data-label": "Change" }, ui.delta(tx.quantity_delta)),
         ui.el("td", { "data-label": "Previous", text: ui.formatQty(tx.previous_quantity) }),
         ui.el("td", { "data-label": "Resulting", text: ui.formatQty(tx.resulting_quantity) }),
-        ui.el("td", { "data-label": "Reason", text: tx.reason || "—" }),
+        ui.el("td", { "data-label": "Reason" },
+          ui.el("span", { text: tx.reason || "—" }),
+          tx.counting_breakdown ? ui.el("span", {
+            class: "text-muted text-small",
+            text: ` · ${tx.counting_breakdown.full_packages} full ${tx.counting_breakdown.package_name} × ${ui.formatQty(tx.counting_breakdown.units_per_package)} + ${ui.formatQty(tx.counting_breakdown.loose_units)} loose ${tx.counting_breakdown.stock_unit}`,
+          }) : null),
         ui.el("td", { "data-label": "Staff", text: this.actorLabel(tx.entered_by) }),
         ui.el("td", { "data-label": "" }, actions),
       ));

@@ -63,12 +63,19 @@ db.sqlite3
 db.sqlite3-journal
 
 # StockMate local database files
+backend/backups/
 stockmate.db
 stockmate.db-wal
 stockmate.db-shm
 *.db
 *.db-wal
 *.db-shm
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
 
 # Flask stuff:
 instance/

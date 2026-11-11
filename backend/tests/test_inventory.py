@@ -4,7 +4,7 @@ Covers both entry modes, idempotency, REAL concurrent submissions, negative
 guards, large-adjustment confirmation, corrections, and ledger verify/repair.
 All 37 pre-existing tests must stay green.
 
-Demo data: Korean Noodles (id resolved by name) starts at 240 portions.
+Demo data: Korean Noodles (id resolved by name) starts at 180 pieces.
 """
 
 import uuid
@@ -96,9 +96,9 @@ def test_remaining_stock_reconciles_and_marks_verification(admin, noodles_id):
     assert body["idempotent_replay"] is False
     assert transaction["type"] == "reconciliation"
     assert transaction["mode"] == "remaining"
-    assert Decimal(transaction["quantity_delta"]) == Decimal("-40")   # 200 - 240
+    assert Decimal(transaction["quantity_delta"]) == Decimal("20")   # 200 - 180
     assert Decimal(transaction["resulting_quantity"]) == Decimal("200")
-    assert Decimal(transaction["previous_quantity"]) == Decimal("240")
+    assert Decimal(transaction["previous_quantity"]) == Decimal("180")
     assert _balance(client, noodles_id) == Decimal("200")
 
     rows = client.get("/api/v1/inventory/stock").json()
@@ -118,7 +118,7 @@ def test_used_stock_deducts_without_verification(admin, noodles_id):
     assert transaction["type"] == "consumption"
     assert transaction["mode"] == "used"
     assert Decimal(transaction["quantity_delta"]) == Decimal("-35")
-    assert Decimal(transaction["resulting_quantity"]) == Decimal("205")
+    assert Decimal(transaction["resulting_quantity"]) == Decimal("145")
 
     after = client.get("/api/v1/inventory/stock").json()
     state = next(r for r in after if r["ingredient_id"] == noodles_id)
@@ -135,13 +135,13 @@ def test_duplicate_submission_applies_once(admin, noodles_id):
     assert first.status_code == 200 == second.status_code
     assert second.json()["idempotent_replay"] is True
     assert first.json()["transaction"]["id"] == second.json()["transaction"]["id"]
-    assert _balance(client, noodles_id) == Decimal("230")  # 240 - 10 exactly once
+    assert _balance(client, noodles_id) == Decimal("170")  # 180 - 10 exactly once
 
 
 # --- Concurrency (D15) --------------------------------------------------------
 
 def test_concurrent_entries_never_lose_updates(admin, noodles_id):
-    """8 parallel "used 5" submissions: final balance must be exactly 200."""
+    """8 parallel "used 5" submissions: final balance must be exactly 140."""
     client, csrf = admin
 
     def submit(index):
@@ -163,7 +163,7 @@ def test_concurrent_entries_never_lose_updates(admin, noodles_id):
         responses = list(pool.map(submit, range(8)))
 
     assert all(r.status_code == 200 for r in responses)
-    assert _balance(client, noodles_id) == Decimal("200")  # 240 - 8×5, no lost updates
+    assert _balance(client, noodles_id) == Decimal("140")  # 180 - 8×5, no lost updates
 
     history = client.get(
         "/api/v1/inventory/transactions",
@@ -179,7 +179,7 @@ def test_negative_stock_prevented_for_staff(admin, noodles_id):
     response = _entry(client, csrf, noodles_id, "used", "999")
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "negative_stock"
-    assert _balance(client, noodles_id) == Decimal("240")  # unchanged
+    assert _balance(client, noodles_id) == Decimal("180")  # unchanged
 
 
 def test_admin_allow_negative_override(admin, noodles_id):
@@ -189,16 +189,16 @@ def test_admin_allow_negative_override(admin, noodles_id):
         allow_negative=True, confirmed=True,
     )
     assert response.status_code == 200
-    assert _balance(client, noodles_id) == Decimal("-759")
+    assert _balance(client, noodles_id) == Decimal("-819")
 
 
 def test_large_adjustment_requires_confirmation(admin, noodles_id):
     client, csrf = admin
-    # 1000 - 240 = +760 delta, above the 500 threshold -> confirmation required.
+    # 1000 - 180 = +820 delta, above the 500 threshold -> confirmation required.
     response = _entry(client, csrf, noodles_id, "remaining", "1000")
     assert response.status_code == 400
     assert response.json()["error"]["code"] == "confirmation_required"
-    assert _balance(client, noodles_id) == Decimal("240")  # not applied
+    assert _balance(client, noodles_id) == Decimal("180")  # not applied
 
     confirmed = _entry(client, csrf, noodles_id, "remaining", "1000", confirmed=True)
     assert confirmed.status_code == 200
@@ -259,7 +259,7 @@ def _post_entry(client, csrf, ingredient_id, mode, quantity):
 def test_correction_fixes_used_entry_without_erasing_it(staff, noodles_id):
     client, csrf = staff
     original = _post_entry(client, csrf, noodles_id, "used", "50")   # oops: meant 5
-    assert _balance(client, noodles_id) == Decimal("190")
+    assert _balance(client, noodles_id) == Decimal("130")
 
     response = client.post(
         f"/api/v1/inventory/transactions/{original['id']}/correct",
@@ -275,7 +275,7 @@ def test_correction_fixes_used_entry_without_erasing_it(staff, noodles_id):
     assert correction["type"] == "correction"
     assert Decimal(correction["quantity_delta"]) == Decimal("45")     # -5 - (-50)
     assert correction["supersedes_id"] == original["id"]
-    assert _balance(client, noodles_id) == Decimal("235")
+    assert _balance(client, noodles_id) == Decimal("175")
 
     # The ORIGINAL row is untouched (immutable ledger, D2).
     history = client.get("/api/v1/inventory/transactions",
@@ -286,15 +286,15 @@ def test_correction_fixes_used_entry_without_erasing_it(staff, noodles_id):
 
 def test_correction_stays_consistent_after_later_entries(staff, noodles_id):
     client, csrf = staff
-    original = _post_entry(client, csrf, noodles_id, "used", "50")     # balance 190
-    _post_entry(client, csrf, noodles_id, "used", "10")                # balance 180
+    original = _post_entry(client, csrf, noodles_id, "used", "50")     # balance 130
+    _post_entry(client, csrf, noodles_id, "used", "10")                # balance 120
     client.post(
         f"/api/v1/inventory/transactions/{original['id']}/correct",
         json={"corrected_quantity": "5", "reason": "correction", "idempotency_key": _key()},
         headers={"X-CSRF-Token": csrf},
     )
-    # Correction compensates the CURRENT balance: 180 + 45 = 225.
-    assert _balance(client, noodles_id) == Decimal("225")
+    # Correction compensates the CURRENT balance: 120 + 45 = 165.
+    assert _balance(client, noodles_id) == Decimal("165")
 
     # And the ledger still reconstructs the cache exactly.
     db = client.app.state.session_factory()
@@ -373,7 +373,7 @@ def test_repair_fixes_drift_and_is_audited(admin, noodles_id):
     body = repair.json()
     assert body["drifted"] == 1
     assert noodles_id in body["repaired_ingredient_ids"]
-    assert _balance(client, noodles_id) == Decimal("240")  # restored FROM ledger
+    assert _balance(client, noodles_id) == Decimal("180")  # restored FROM ledger
 
     # Transactions untouched, discrepancy flagged, audit row written.
     history = client.get("/api/v1/inventory/transactions",

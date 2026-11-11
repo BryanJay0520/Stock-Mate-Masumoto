@@ -17,6 +17,7 @@ from sqlalchemy import (
     Index,
     Numeric,
     String,
+    Text,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -68,6 +69,7 @@ class InventoryTransaction(Base):
     business_date: Mapped[date] = mapped_column(Date, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     idempotency_key: Mapped[str | None] = mapped_column(String(80), unique=True, nullable=True)
+    counting_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     supersedes_id: Mapped[int | None] = mapped_column(
         ForeignKey("inventory_transactions.id"), nullable=True
     )

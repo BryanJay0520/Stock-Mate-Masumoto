@@ -12,6 +12,7 @@ THE most correctness-critical code in StockMate. Rules:
 - Corrections never edit history; they append a compensating entry.
 """
 
+import json
 import time
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -68,13 +69,23 @@ def _entry_matches(
     *,
     ingredient_id: int,
     mode: str,
-    quantity: Decimal,
+    quantity: Decimal | None,
+    package_count,
     reason: str | None,
 ) -> bool:
     """Safeguard: a replayed idempotency key must carry the SAME payload."""
     if transaction.mode != mode or transaction.reason != reason:
         return False
     if transaction.ingredient_id != ingredient_id:
+        return False
+    if package_count is not None:
+        if transaction.counting_json is None:
+            return False
+        original = json.loads(transaction.counting_json)
+        return (original["full_packages"] == package_count.full_packages
+                and Decimal(original["loose_units"]) == package_count.loose_units
+                and original["package_version"] == package_count.package_version)
+    if transaction.counting_json is not None or quantity is None:
         return False
     if mode == MODE_USED:
         return transaction.quantity_delta == -quantity
@@ -188,7 +199,8 @@ def record_stock_entry(
     ingredient_id: int,
     user: User,
     mode: str,
-    quantity: Decimal,
+    quantity: Decimal | None,
+    package_count=None,
     reason: str | None,
     idempotency_key: str,
     confirmed: bool,
@@ -198,11 +210,11 @@ def record_stock_entry(
     """Record a stock entry. Returns ``(transaction, was_idempotent_replay)``."""
     if mode not in (MODE_REMAINING, MODE_USED):
         raise ApiError(400, "invalid_mode", "Mode must be 'remaining' or 'used'.")
-    if mode == MODE_USED and quantity <= 0:
+    if mode == MODE_USED and quantity is not None and quantity <= 0:
         raise ApiError(400, "invalid_quantity", "Used quantity must be greater than zero.")
-    if mode == MODE_REMAINING and quantity < 0:
+    if mode == MODE_REMAINING and quantity is not None and quantity < 0:
         raise ApiError(400, "invalid_quantity", "Remaining quantity cannot be negative.")
-    if quantity > MAX_QUANTITY:
+    if quantity is not None and quantity > MAX_QUANTITY:
         raise ApiError(400, "invalid_quantity", "Quantity is unreasonably large.")
     if reason is not None and reason not in ENTRY_REASONS:
         raise ApiError(400, "invalid_reason", f"Reason must be one of: {sorted(ENTRY_REASONS)}.")
@@ -217,7 +229,7 @@ def record_stock_entry(
         set_write_intent(False)  # replay path exits before _run_atomic
         if not _entry_matches(
             existing, ingredient_id=ingredient_id, mode=mode,
-            quantity=quantity, reason=reason,
+            quantity=quantity, package_count=package_count, reason=reason,
         ):
             raise ApiError(
                 409, "idempotency_conflict",
@@ -235,14 +247,37 @@ def record_stock_entry(
         if ingredient.status != STATUS_ACTIVE:
             raise ApiError(400, "ingredient_inactive", "Ingredient is archived.")
 
+        resolved_quantity = quantity
+        counting_json = None
+        if package_count is not None:
+            if not ingredient.count_package_enabled or ingredient.count_units_per_package is None:
+                raise ApiError(400, "packaging_disabled", "This ingredient has no counting package.")
+            if package_count.package_version != ingredient.count_package_version:
+                raise ApiError(409, "packaging_changed",
+                               "Counting package settings changed. Refresh and recount.")
+            resolved_quantity = (ingredient.count_units_per_package * package_count.full_packages
+                                 + package_count.loose_units)
+            counting_json = json.dumps({
+                "full_packages": package_count.full_packages,
+                "loose_units": str(package_count.loose_units),
+                "package_name": ingredient.count_package_name,
+                "units_per_package": str(ingredient.count_units_per_package),
+                "stock_unit": ingredient.unit.abbreviation,
+                "package_version": ingredient.count_package_version,
+            })
+        if resolved_quantity is None or resolved_quantity > MAX_QUANTITY:
+            raise ApiError(400, "invalid_quantity", "Quantity is unreasonably large.")
+        if mode == MODE_USED and resolved_quantity <= 0:
+            raise ApiError(400, "invalid_quantity", "Used quantity must be greater than zero.")
+
         state = db.get(IngredientStockState, ingredient_id)
         current = state.current_quantity
 
         if mode == MODE_USED:
-            delta = -quantity
+            delta = -resolved_quantity
             entry_type = TYPE_CONSUMPTION
         else:
-            delta = quantity - current  # reconciliation, NOT consumption (D3)
+            delta = resolved_quantity - current  # reconciliation, NOT consumption (D3)
             entry_type = TYPE_RECONCILIATION
 
         new_balance = current + delta
@@ -280,6 +315,7 @@ def record_stock_entry(
             business_date=_business_date(settings, now),
             created_at=now,
             idempotency_key=idempotency_key,
+            counting_json=counting_json,
         )
         db.add(transaction)
         db.flush()
@@ -293,7 +329,7 @@ def record_stock_entry(
         if existing is not None:
             if not _entry_matches(
                 existing, ingredient_id=ingredient_id, mode=mode,
-                quantity=quantity, reason=reason,
+                quantity=quantity, package_count=package_count, reason=reason,
             ):
                 raise ApiError(
                     409, "idempotency_conflict",

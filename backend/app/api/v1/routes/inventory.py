@@ -12,6 +12,7 @@ HTTP concerns (auth, CSRF, request/response mapping). Incoming/projected
 quantities on /inventory/stock come from app/services/ordering.py (D36).
 """
 
+import json
 from datetime import date
 from decimal import Decimal
 
@@ -53,6 +54,8 @@ def _to_out(transaction: InventoryTransaction) -> TransactionOut:
         created_at=transaction.created_at,
         idempotency_key=transaction.idempotency_key,
         supersedes_id=transaction.supersedes_id,
+        counting_breakdown=json.loads(transaction.counting_json)
+        if transaction.counting_json else None,
     )
 
 
@@ -82,6 +85,10 @@ def current_stock(
             last_counted_by=state.last_counted_by,
             last_transaction_at=state.last_transaction_at,
             confidence=state.confidence,
+            count_package_enabled=ingredient.count_package_enabled,
+            count_package_name=ingredient.count_package_name,
+            count_units_per_package=ingredient.count_units_per_package,
+            count_package_version=ingredient.count_package_version,
             incoming_quantity=bucket["incoming_quantity"] if bucket else Decimal("0.000"),
             incoming_ordered_quantity=(
                 bucket["incoming_ordered_quantity"] if bucket else Decimal("0.000")
@@ -116,6 +123,7 @@ def record_entry(
         user=user,
         mode=payload.mode,
         quantity=payload.quantity,
+        package_count=payload.package_count,
         reason=payload.reason,
         idempotency_key=payload.idempotency_key,
         confirmed=payload.confirmed,

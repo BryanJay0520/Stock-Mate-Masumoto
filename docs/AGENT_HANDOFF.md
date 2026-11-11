@@ -5,13 +5,15 @@
 
 ## Where the project is
 
-- **Current phase:** Phase 2 — Supplier Scheduling & Ordering.
+- **Current phase:** Inventory counting enhancement before Phase 3.
 - **Progress:** Phase 1 complete (through `a67d07e`). Phase 2 Step 1
   (`2a34b14`) and Step 2 (`f08e48b`) committed. Phase 2 Step 3 (delivery
   receiving & stock integration) is **implemented; Codex reconciliation
   and verification are recorded in PROJECT_STATUS.md**.
-  Commit approved on 2026-11-12; the next step (forecasting, Phase 3)
-  has NOT started.
+  Committed as `bfcb824` on 2026-11-12. The subsequent approved counting
+  enhancement and guarded fictional development data reset are documented in
+  `PROJECT_STATUS.md`; forecasting has NOT started. The demo database now has
+  Korean Noodles in `pc` with 60 pieces per Box and 180 pieces opening stock.
 - Development happens **incrementally, one step at a time** — never implement
   multiple steps without explicit user approval.
 
@@ -35,7 +37,7 @@
 ## Read these before doing anything
 
 1. `docs/ARCHITECTURE.md` — full architecture, database schema, business logic.
-2. `docs/DECISIONS.md` — binding decisions D1–D37. Supersede, never silently
+2. `docs/DECISIONS.md` — binding decisions D1–D38. Supersede, never silently
    change. (Renumbered during the Phase 0 revision — cite current text.)
 3. `docs/PROJECT_STATUS.md` — roadmap + the ordered Phase 1 checklist with
    per-step status.

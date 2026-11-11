@@ -2,6 +2,7 @@
 
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import text
 
 from app.db_admin import BACKEND_DIR, run_migrations
@@ -40,4 +41,6 @@ def test_populated_receipts_survive_additive_upgrades(seeded_client, settings):
         assert item["quantity"] == 3
         assert item["quantity_rejected"] == 0
         assert connection.execute(text("PRAGMA foreign_key_check")).all() == []
-        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0006_receipt_staff_name"
+        assert connection.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == (
+            ScriptDirectory.from_config(config).get_current_head()
+        )

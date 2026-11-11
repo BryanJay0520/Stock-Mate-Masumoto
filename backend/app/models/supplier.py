@@ -12,7 +12,7 @@ it works identically on SQLite and PostgreSQL.
 
 from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, ForeignKey, Numeric, String, Text
+from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -81,6 +81,9 @@ class SupplierIngredient(Base):
         ForeignKey("ingredients.id"), primary_key=True, index=True
     )
     package_size: Mapped[Decimal | None] = mapped_column(Numeric(14, 3), nullable=True)
+    purchase_package_name: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    whole_packages_only: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False,
+                                                      server_default="0")
     min_order_quantity: Mapped[Decimal | None] = mapped_column(Numeric(14, 3), nullable=True)
 
     supplier: Mapped[Supplier] = relationship(back_populates="ingredient_links")

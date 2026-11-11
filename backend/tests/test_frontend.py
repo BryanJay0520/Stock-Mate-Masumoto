@@ -86,8 +86,8 @@ def test_units_list_available_to_staff(staff):
     response = client.get("/api/v1/units")
     assert response.status_code == 200
     units = response.json()
-    assert len(units) == 6
-    assert {u["abbreviation"] for u in units} == {"ptn", "kg", "L", "slc", "sht", "pc"}
+    assert len(units) == 7
+    assert {u["abbreviation"] for u in units} == {"ptn", "kg", "L", "slc", "sht", "pc", "pack"}
     assert all({"id", "name", "abbreviation"} <= set(u) for u in units)
 
 
@@ -133,7 +133,7 @@ def test_used_then_remaining_entry_flow(staff):
         "confirmed": False, "allow_negative": False,
     }, headers={"X-CSRF-Token": csrf})
     assert used.status_code == 200
-    assert used.json()["transaction"]["resulting_quantity"] == "230.000"
+    assert used.json()["transaction"]["resulting_quantity"] == "170.000"
 
     remaining = client.post("/api/v1/inventory/entries", json={
         "ingredient_id": noodles, "mode": "remaining", "quantity": "200",
@@ -144,7 +144,7 @@ def test_used_then_remaining_entry_flow(staff):
     body = remaining.json()["transaction"]
     assert body["type"] == "reconciliation"
     assert body["resulting_quantity"] == "200.000"
-    assert body["quantity_delta"] == "-30.000"
+    assert body["quantity_delta"] == "30.000"
 
     # The physical count updated verification metadata; the UI shows it.
     stock = client.get("/api/v1/inventory/stock").json()
@@ -174,7 +174,7 @@ def test_retry_with_same_key_returns_original_without_double_counting(staff):
 
     stock = client.get("/api/v1/inventory/stock").json()
     row = next(r for r in stock if r["ingredient_id"] == noodles)
-    assert row["current_quantity"] == "235.000"  # deducted exactly once
+    assert row["current_quantity"] == "175.000"  # deducted exactly once
 
 
 def test_large_adjustment_confirmation_flow(staff):
@@ -198,7 +198,7 @@ def test_large_adjustment_confirmation_flow(staff):
     confirmed = client.post("/api/v1/inventory/entries", json=payload,
                             headers={"X-CSRF-Token": csrf})
     assert confirmed.status_code == 200
-    assert confirmed.json()["transaction"]["quantity_delta"] == "660.000"  # 900 - 240
+    assert confirmed.json()["transaction"]["quantity_delta"] == "720.000"  # 900 - 180
     assert confirmed.json()["transaction"]["resulting_quantity"] == "900.000"
 
 

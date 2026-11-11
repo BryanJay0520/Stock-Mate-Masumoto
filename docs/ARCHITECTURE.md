@@ -213,6 +213,32 @@ if the supplier is later archived),
 **purchase_order_items** (Phase 2) — `id`, `order_id` FK, `ingredient_id` FK,
 `quantity_ordered`, `quantity_received` (default 0).
 
+**Counting packages** (inventory enhancement, migration `0007`):
+`ingredients.count_package_enabled`, `count_package_name`,
+`count_units_per_package`, and `count_package_version` configure a staff
+counting aid in the ingredient's canonical stock unit. The balance remains
+solely in `ingredient_stock_state.current_quantity`; package counts never
+form another balance. `inventory_transactions.counting_json` preserves the
+original full-package/loose-unit breakdown, conversion factor, stock unit,
+and configuration version on each packaged stock entry. Plain stock-unit
+entries have null breakdowns. A configuration change increments the version
+without touching stock or earlier ledger records; stale open forms are
+rejected before writing. An idempotent retry of an already written count can
+still return the original record after configuration changes.
+The development demo seed now creates Korean Noodles in `pc` with a 60-piece
+Box and 180-piece opening balance. It also uses `pc` for Chinese Noodles,
+Eggs, and Chashu and `pack` for Soup Base. Changing an ingredient's canonical
+unit after stock history exists remains blocked; the guarded development-only
+reset replaces the old fictional rows without relabeling historical entries.
+
+**Purchasing packages** stay supplier-specific on `supplier_ingredients`:
+`package_size` is canonical stock units per purchase package,
+`purchase_package_name` is the supplier's label, and `whole_packages_only`
+controls future whole-package recommendations. These fields are independent
+of the ingredient's counting package. Phase 3 can calculate whole purchase
+packages with `ceil(required_units / supplier.package_size)` for each chosen
+supplier; no forecasting calculation is implemented in this enhancement.
+
 **delivery_receipts** (Phase 2, D37) — `id`, `purchase_order_id` FK,
 `received_by` FK (authenticated account), `received_by_staff_name` (required,
 self-reported employee name), `received_at` (UTC), `receipt_date` (business

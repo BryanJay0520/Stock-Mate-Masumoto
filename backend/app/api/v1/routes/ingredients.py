@@ -18,6 +18,7 @@ from app.schemas.catalog import (
     IngredientDetailOut,
     IngredientOut,
     IngredientUpdate,
+    PurchasePackagingUpdate,
 )
 from app.services import catalog
 
@@ -34,6 +35,10 @@ def _to_out(ingredient: Ingredient) -> IngredientOut:
         min_safety_stock=ingredient.min_safety_stock,
         critical_threshold=ingredient.critical_threshold,
         usage_per_serving=ingredient.usage_per_serving,
+        count_package_enabled=ingredient.count_package_enabled,
+        count_package_name=ingredient.count_package_name,
+        count_units_per_package=ingredient.count_units_per_package,
+        count_package_version=ingredient.count_package_version,
         status=ingredient.status,
         primary_supplier_id=ingredient.primary_supplier_id,
         supplier_ids=[link.supplier_id for link in ingredient.supplier_links],
@@ -105,6 +110,23 @@ def update_ingredient(
         db, admin=admin, ingredient_id=ingredient_id, data=payload
     )
     return _to_out(ingredient)
+
+
+@router.patch(
+    "/ingredients/{ingredient_id}/suppliers/{supplier_id}/purchase-packaging",
+    response_model=dict, dependencies=[Depends(csrf_protect)],
+)
+def update_purchase_packaging(
+    ingredient_id: int, supplier_id: int, payload: PurchasePackagingUpdate,
+    admin: User = Depends(require_admin), db: Session = Depends(get_db),
+):
+    link = catalog.update_purchase_packaging(
+        db, admin=admin, ingredient_id=ingredient_id, supplier_id=supplier_id, data=payload
+    )
+    return {"ingredient_id": ingredient_id, "supplier_id": supplier_id,
+            "package_size": format(link.package_size, ".3f") if link.package_size else None,
+            "purchase_package_name": link.purchase_package_name,
+            "whole_packages_only": link.whole_packages_only}
 
 
 @router.post(

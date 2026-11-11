@@ -34,6 +34,7 @@ const STAFF = { username: "staff", password: "demo-staff-password" };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const results = [];
 let chrome;
+let chromeStderr = "";
 let ws;
 let nextId = 1;
 const pending = new Map();
@@ -43,8 +44,21 @@ const pending = new Map();
 async function send(method, params = {}) {
   return new Promise((resolve, reject) => {
     const id = nextId++;
-    pending.set(id, { resolve, reject });
-    ws.send(JSON.stringify({ id, method, params }));
+    const timer = setTimeout(() => {
+      pending.delete(id);
+      reject(new Error(`CDP ${method} timed out (Chrome exit: ${chrome.exitCode ?? "running"}): ${chromeStderr}`));
+    }, 10000);
+    pending.set(id, {
+      resolve: (value) => { clearTimeout(timer); resolve(value); },
+      reject: (error) => { clearTimeout(timer); reject(error); },
+    });
+    try {
+      ws.send(JSON.stringify({ id, method, params }));
+    } catch (error) {
+      pending.delete(id);
+      clearTimeout(timer);
+      reject(error);
+    }
   });
 }
 
@@ -133,10 +147,14 @@ async function apiAsSession(path) {
 async function boot() {
   const profile = mkdtempSync(join(tmpdir(), "stockmate-chrome-"));
   chrome = spawn(CHROME, [
-    "--headless=new", "--disable-gpu", "--no-first-run", "--window-size=1440,900",
+    "--headless=new", "--no-sandbox", "--disable-gpu", "--in-process-gpu", "--disable-gpu-sandbox",
+    "--disable-features=Vulkan,SkiaGraphite", "--no-first-run", "--window-size=1440,900",
     `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${profile}`,
     "about:blank",
-  ], { stdio: "ignore" });
+  ], { stdio: ["ignore", "ignore", "pipe"] });
+  chrome.stderr.on("data", (chunk) => {
+    chromeStderr = (chromeStderr + chunk.toString()).slice(-2000);
+  });
 
   let version = null;
   for (let i = 0; i < 60 && !version; i++) {
@@ -146,7 +164,9 @@ async function boot() {
     } catch { /* not ready */ }
     if (!version) await sleep(300);
   }
-  if (!version) throw new Error("Chrome CDP did not start");
+  if (!version) throw new Error(
+    `Chrome CDP did not start (exit: ${chrome.exitCode ?? "running"}): ${chromeStderr}`,
+  );
   console.log(`Browser: ${version.Browser}`);
   console.log(`Backend: ${BASE}`);
 
@@ -155,8 +175,16 @@ async function boot() {
   )).json();
   ws = new WebSocket(target.webSocketDebuggerUrl);
   await new Promise((resolve, reject) => {
-    ws.onopen = resolve;
-    ws.onerror = reject;
+    const timer = setTimeout(() => reject(new Error(
+      `Chrome CDP WebSocket timed out (Chrome exit: ${chrome.exitCode ?? "running"})`,
+    )), 10000);
+    ws.onopen = () => { clearTimeout(timer); resolve(); };
+    ws.onerror = (error) => { clearTimeout(timer); reject(error); };
+    ws.onclose = () => { clearTimeout(timer); reject(new Error("Chrome CDP WebSocket closed")); };
+    if (chrome.exitCode !== null) {
+      clearTimeout(timer);
+      reject(new Error(`Chrome exited before CDP connected: ${chrome.exitCode}`));
+    }
   });
   ws.onmessage = (event) => {
     const msg = JSON.parse(event.data);
@@ -242,17 +270,20 @@ async function inventoryTests() {
       const select = document.getElementById("entry-ingredient");
       select.value = [...select.options].find(o => o.text.includes("Korean Noodles")).value;
       select.dispatchEvent(new Event("change", {bubbles: true}));
+      const method = document.getElementById("entry-count-method");
+      method.value = "units";
+      method.dispatchEvent(new Event("change", {bubbles: true}));
       const qty = document.getElementById("entry-quantity");
       qty.value = "10";
       qty.dispatchEvent(new Event("input", {bubbles: true}));
     })()`);
-    await assertText(".preview-box", "230");
+    await assertText(".preview-box", "170");
     await evaluate(`document.querySelector("#view form button.btn[type=submit]").click()`);
-    await waitFor(`document.querySelector("#view .alert--success")`);
-    await assertText("#view .alert--success", "new balance 230");
+    await waitFor(`document.querySelector("#view .alert--success")?.textContent.includes("Usage recorded")`);
+    await assertText("#view .alert--success", "new balance 170");
     const stock = await apiAsSession("/inventory/stock");
     const noodles = stock.find((r) => r.ingredient_name === "Korean Noodles");
-    assert(noodles.current_quantity === "230.000", `API balance ${noodles.current_quantity}`);
+    assert(noodles.current_quantity === "170.000", `API balance ${noodles.current_quantity}`);
   });
 
   await test("remaining stock entry reconciles and verifies the count", async () => {
@@ -262,9 +293,9 @@ async function inventoryTests() {
       qty.value = "200";
       qty.dispatchEvent(new Event("input", {bubbles: true}));
     })()`);
-    await assertText(".preview-box", "-30", "preview should show -30 adjustment");
+    await assertText(".preview-box", "+30", "preview should show +30 adjustment");
     await evaluate(`document.querySelector("#view form button.btn[type=submit]").click()`);
-    await waitFor(`document.querySelector("#view .alert--success")`);
+    await waitFor(`document.querySelector("#view .alert--success")?.textContent.includes("Physical count saved")`);
     await assertText("#view .alert--success", "new balance 200");
     const stock = await apiAsSession("/inventory/stock");
     const noodles = stock.find((r) => r.ingredient_name === "Korean Noodles");
@@ -723,6 +754,89 @@ async function receivingTests() {
   });
 }
 
+async function packageCountingTests() {
+  await test("admin configures a counting package in Ingredient Management", async () => {
+    await navigate("/ingredients");
+    await waitFor(`document.querySelector("#view").textContent.includes("Korean Noodles")`);
+    await evaluate(`(() => {
+      const row = [...document.querySelectorAll("#view tbody tr")]
+        .find(r => r.textContent.includes("Korean Noodles"));
+      [...row.querySelectorAll("button")].find(b => b.textContent === "Edit").click();
+    })()`);
+    await waitFor(`document.getElementById("ingredient-count_package_enabled")`);
+    await evaluate(`(() => {
+      const enabled = document.getElementById("ingredient-count_package_enabled");
+      enabled.checked = true;
+      enabled.dispatchEvent(new Event("change", {bubbles: true}));
+      document.getElementById("ingredient-count_package_name").value = "Box";
+      document.getElementById("ingredient-count_units_per_package").value = "60";
+      [...document.querySelectorAll(".modal-overlay button")]
+        .find(b => b.textContent === "Save Ingredient").click();
+    })()`);
+    await waitFor(`document.getElementById("toasts").textContent.includes("Ingredient updated")`);
+    const item = (await apiAsSession("/ingredients")).find(i => i.name === "Korean Noodles");
+    assert(item.count_package_enabled && item.count_units_per_package === "60.000",
+      `count packaging was not saved: ${JSON.stringify(item)}`);
+  });
+
+  await test("two full boxes and 15 loose units reconcile to 135", async () => {
+    await navigate("/entry");
+    await waitFor(`document.getElementById("entry-ingredient")`);
+    await evaluate(`(() => {
+      const select = document.getElementById("entry-ingredient");
+      select.value = [...select.options].find(o => o.text.includes("Korean Noodles")).value;
+      select.dispatchEvent(new Event("change", {bubbles: true}));
+      [...document.querySelectorAll(".mode-toggle button")]
+        .find(b => b.textContent.includes("Remaining Stock")).click();
+      const boxes = document.getElementById("entry-full-packages");
+      const loose = document.getElementById("entry-loose-units");
+      boxes.value = "2";
+      boxes.dispatchEvent(new Event("input", {bubbles: true}));
+      loose.value = "15";
+      loose.dispatchEvent(new Event("input", {bubbles: true}));
+    })()`);
+    await assertText(".preview-box", "135");
+    await assertText("#view", "Do not include pieces already counted in full packages");
+    assert(await evaluate(`getComputedStyle(document.getElementById("entry-quantity").closest(".field")).display === "none"`),
+      "single-unit field must be hidden while counting packages");
+    await evaluate(`document.querySelector("#view form button[type=submit]").click()`);
+    await waitFor(`document.querySelector(".modal-overlay")?.textContent.includes("Confirm large adjustment")`);
+    await evaluate(`[...document.querySelectorAll(".modal-overlay button")]
+      .find(b => b.textContent === "Yes, record it").click()`);
+    await waitFor(`document.querySelector("#view .alert--success")?.textContent.includes("Physical count saved")`);
+    const item = (await apiAsSession("/inventory/stock")).find(i => i.ingredient_name === "Korean Noodles");
+    assert(item.current_quantity === "135.000" && item.confidence === "high",
+      `package reconciliation failed: ${JSON.stringify(item)}`);
+    const history = await apiAsSession(`/inventory/transactions?ingredient_id=${item.ingredient_id}`);
+    assert(history[0].counting_breakdown?.full_packages === 2,
+      `count breakdown missing: ${JSON.stringify(history[0])}`);
+    await screenshot("package-count-entry");
+  });
+
+  await test("used packages deduct canonical units and total-unit mode remains available", async () => {
+    await evaluate(`(() => {
+      [...document.querySelectorAll(".mode-toggle button")]
+        .find(b => b.textContent.includes("Used Stock")).click();
+      document.getElementById("entry-full-packages").value = "1";
+      const loose = document.getElementById("entry-loose-units");
+      loose.value = "5";
+      loose.dispatchEvent(new Event("input", {bubbles: true}));
+    })()`);
+    await assertText(".preview-box", "65");
+    await evaluate(`document.querySelector("#view form button[type=submit]").click()`);
+    await waitFor(`document.querySelector("#view .alert--success")?.textContent.includes("Usage recorded")`);
+    const item = (await apiAsSession("/inventory/stock")).find(i => i.ingredient_name === "Korean Noodles");
+    assert(item.current_quantity === "70.000", `used package conversion failed: ${item.current_quantity}`);
+    await evaluate(`(() => {
+      const method = document.getElementById("entry-count-method");
+      method.value = "units";
+      method.dispatchEvent(new Event("change", {bubbles: true}));
+    })()`);
+    assert(await evaluate(`getComputedStyle(document.getElementById("entry-quantity").closest(".field")).display !== "none"`),
+      "total-unit input was not shown");
+  });
+}
+
 async function ingredientTests() {
   await test("admin can create an ingredient with an opening balance", async () => {
     await navigate("/ingredients");
@@ -903,6 +1017,7 @@ try {
   await scheduleTests();
   await orderTests();
   await receivingTests();
+  await packageCountingTests();
   await ingredientTests();
   await correctionTests();
   await responsiveTests();

@@ -60,7 +60,7 @@ SM.pages.entry = {
 
     const ingredientSelect = ui.el("select", {
       class: "select", id: "entry-ingredient",
-      onchange: () => { resetSubmission(); updatePreview(); },
+      onchange: () => { resetSubmission(); updateCountingControls(); updatePreview(); },
     }, active.map((r) => ui.el("option", {
       value: r.ingredient_id,
       text: `${r.ingredient_name} (${r.unit})`,
@@ -69,8 +69,41 @@ SM.pages.entry = {
     const quantityInput = ui.el("input", {
       class: "input", id: "entry-quantity", type: "number",
       min: "0", step: "0.001", inputmode: "decimal", required: true,
-      oninput: () => updatePreview(),
+      oninput: () => { resetSubmission(); updatePreview(); },
     });
+    const countMethod = ui.el("select", {
+      class: "select", id: "entry-count-method",
+      onchange: () => { resetSubmission(); updateCountingControls(); updatePreview(); },
+    },
+      ui.el("option", { value: "packages", text: "Full packages + loose units" }),
+      ui.el("option", { value: "units", text: "Total individual stock units" }));
+    const countMethodField = ui.el("div", { class: "field" },
+      ui.el("label", { class: "field__label", for: "entry-count-method", text: "Counting method" }),
+      countMethod);
+    const packageHint = ui.el("p", { class: "field__hint" });
+    const fullPackagesInput = ui.el("input", {
+      class: "input", id: "entry-full-packages", type: "number",
+      min: "0", step: "1", inputmode: "numeric", value: "0",
+      oninput: () => { resetSubmission(); updatePreview(); },
+    });
+    const looseUnitsInput = ui.el("input", {
+      class: "input", id: "entry-loose-units", type: "number",
+      min: "0", step: "0.001", inputmode: "decimal", value: "0",
+      oninput: () => { resetSubmission(); updatePreview(); },
+    });
+    const packageFields = ui.el("div", {},
+      packageHint,
+      ui.el("div", { class: "field" },
+        ui.el("label", { class: "field__label", for: "entry-full-packages", text: "Full packages" }),
+        fullPackagesInput),
+      ui.el("div", { class: "field" },
+        ui.el("label", { class: "field__label", for: "entry-loose-units", text: "Loose stock units" }),
+        looseUnitsInput,
+        ui.el("span", { class: "field__hint", text: "Count contents of opened or partially filled packages here. Do not include pieces already counted in full packages." })));
+    const quantityField = ui.el("div", { class: "field" },
+      ui.el("label", { class: "field__label", for: "entry-quantity", id: "quantity-label", text: "Quantity" }),
+      quantityInput,
+      ui.el("span", { class: "field__hint", text: "Up to 3 decimal places, in the ingredient's stock unit." }));
     const reasonSelect = ui.el("select", { class: "select", id: "entry-reason" },
       this.REASONS.map(([value, label]) => ui.el("option", { value, text: label })));
 
@@ -84,12 +117,49 @@ SM.pages.entry = {
     const submitButton = ui.el("button", { class: "btn", type: "submit", text: "Record Stock" });
 
     const selectedItem = () => byId[Number(ingredientSelect.value)];
+    const usingPackages = () => selectedItem().count_package_enabled && countMethod.value === "packages";
+
+    function updateCountingControls() {
+      const item = selectedItem();
+      countMethodField.hidden = !item.count_package_enabled;
+      packageFields.hidden = !usingPackages();
+      quantityField.hidden = usingPackages();
+      quantityInput.required = !usingPackages();
+      packageHint.textContent = `1 ${item.count_package_name || "package"} = ${ui.formatQty(item.count_units_per_package || 0)} ${item.unit}. Count only sealed/full packages as full packages.`;
+      quantityField.querySelector("label").textContent = state.mode === "used"
+        ? `Total used (${item.unit})` : `Total physical count (${item.unit})`;
+    }
+
+    function readCount() {
+      const item = selectedItem();
+      if (!usingPackages()) {
+        const quantity = ui.toMillis(quantityInput.value);
+        return { quantity, empty: quantityInput.value.trim() === "", packageCount: null };
+      }
+      const boxesText = fullPackagesInput.value.trim();
+      const looseText = looseUnitsInput.value.trim();
+      const boxes = /^\d+$/.test(boxesText) ? Number(boxesText) : null;
+      const loose = ui.toMillis(looseText);
+      const size = ui.toMillis(item.count_units_per_package);
+      const valid = boxes !== null && Number.isSafeInteger(boxes) && boxes <= 1_000_000
+        && loose !== null && size !== null && size > 0;
+      return {
+        quantity: valid ? boxes * size + loose : null,
+        empty: boxesText === "" && looseText === "",
+        packageCount: valid ? {
+          full_packages: boxes,
+          loose_units: ui.fromMillis(loose),
+          package_version: item.count_package_version,
+        } : null,
+      };
+    }
 
     function setMode(mode) {
       state.mode = mode;
       usedButton.classList.toggle("is-selected", mode === "used");
       remainingButton.classList.toggle("is-selected", mode === "remaining");
       resetSubmission();
+      updateCountingControls();
       updatePreview();
     }
 
@@ -101,18 +171,20 @@ SM.pages.entry = {
     function updatePreview() {
       const item = selectedItem();
       const current = ui.toMillis(item.current_quantity);
-      const quantity = ui.toMillis(quantityInput.value);
+      const { quantity, empty } = readCount();
       const rowsOut = [
         ["Current system stock", `${ui.formatQty(item.current_quantity)} ${item.unit}`],
       ];
-      if (quantityInput.value.trim() === "") {
+      if (empty) {
         rowsOut.push([state.mode === "used" ? "Quantity used" : "Physical count", "—"]);
-      } else if (quantity === null || quantity < 0) {
+      } else if (quantity === null || quantity < 0 || quantity > 1_000_000_000) {
         rowsOut.push(["Quantity", "Enter a valid non-negative number (max 3 decimals)"]);
       } else if (state.mode === "used") {
+        if (usingPackages()) rowsOut.push(["Converted total", `${ui.fromMillis(quantity)} ${item.unit}`]);
         rowsOut.push(["Quantity used", `${ui.fromMillis(quantity)} ${item.unit}`]);
         rowsOut.push(["Expected remaining stock", `${ui.fromMillis(current - quantity)} ${item.unit}`]);
       } else {
+        if (usingPackages()) rowsOut.push(["Converted total", `${ui.fromMillis(quantity)} ${item.unit}`]);
         rowsOut.push(["Physical count", `${ui.fromMillis(quantity)} ${item.unit}`]);
         rowsOut.push(["Adjustment", `${quantity - current >= 0 ? "+" : ""}${ui.fromMillis(quantity - current)} ${item.unit}`]);
         rowsOut.push(["New stock balance", `${ui.fromMillis(quantity)} ${item.unit}`]);
@@ -135,15 +207,15 @@ SM.pages.entry = {
 
     async function submit(confirmed) {
       const item = selectedItem();
-      const quantity = ui.toMillis(quantityInput.value);
-      if (quantity === null || quantity < 0 || quantityInput.value.trim() === "") {
+      const { quantity, empty, packageCount } = readCount();
+      if (quantity === null || quantity < 0 || quantity > 1_000_000_000 || empty || (state.mode === "used" && quantity === 0)) {
         ui.clear(feedback).append(ui.alert("Enter a valid non-negative quantity (up to 3 decimal places)."));
         return;
       }
       const payload = {
         ingredient_id: item.ingredient_id,
         mode: state.mode,
-        quantity: ui.fromMillis(quantity),
+        ...(packageCount ? { package_count: packageCount } : { quantity: ui.fromMillis(quantity) }),
         reason: reasonSelect.value,
         idempotency_key: state.key,
         confirmed,
@@ -169,6 +241,8 @@ SM.pages.entry = {
           `${verb}. ${item.ingredient_name}: new balance ${ui.formatQty(tx.resulting_quantity)} ${item.unit}.`,
           "success"));
         quantityInput.value = "";
+        fullPackagesInput.value = "0";
+        looseUnitsInput.value = "0";
         resetSubmission(); // next entry = new logical submission = fresh key
         updatePreview();
       } catch (error) {
@@ -205,13 +279,9 @@ SM.pages.entry = {
       ui.el("div", { class: "field" },
         ui.el("label", { class: "field__label", for: "entry-ingredient", text: "Ingredient" }),
         ingredientSelect),
-      ui.el("div", { class: "field" },
-        ui.el("label", {
-          class: "field__label", for: "entry-quantity", id: "quantity-label",
-          text: "Quantity",
-        }),
-        quantityInput,
-        ui.el("span", { class: "field__hint", text: "Up to 3 decimal places, in the ingredient's stock unit." })),
+      countMethodField,
+      quantityField,
+      packageFields,
       ui.el("div", { class: "field" },
         ui.el("label", { class: "field__label", for: "entry-reason", text: "Reason" }),
         reasonSelect),
@@ -229,6 +299,7 @@ SM.pages.entry = {
     ));
 
     setMode("used");
+    updateCountingControls();
     updatePreview();
   },
 };

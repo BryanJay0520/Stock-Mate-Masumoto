@@ -62,6 +62,18 @@ class SupplierIngredientLinkOut(BaseModel):
     ingredient_name: str
     ingredient_status: str
     is_primary: bool
+    package_size: Decimal | None = None
+    purchase_package_name: str | None = None
+    whole_packages_only: bool = False
+
+    _package_size = field_serializer("package_size")(_ser_decimal)
+
+
+class PurchasePackagingUpdate(BaseModel):
+    """Supplier purchasing package, independent of ingredient counting size."""
+    package_size: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=3)
+    purchase_package_name: str | None = Field(default=None, max_length=40)
+    whole_packages_only: bool = False
 
 
 class SupplierDetailOut(SupplierOut):
@@ -75,6 +87,9 @@ class IngredientCreate(BaseModel):
     min_safety_stock: Decimal = Field(default=Decimal("0"), ge=0, max_digits=14, decimal_places=3)
     critical_threshold: Decimal = Field(default=Decimal("0"), ge=0, max_digits=14, decimal_places=3)
     usage_per_serving: Decimal = Field(gt=0, max_digits=14, decimal_places=3)
+    count_package_enabled: bool = False
+    count_package_name: str | None = Field(default=None, max_length=40)
+    count_units_per_package: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=3)
     primary_supplier_id: int | None = None
     alternative_supplier_ids: list[int] = []
     opening_quantity: Decimal | None = Field(
@@ -91,6 +106,9 @@ class IngredientUpdate(BaseModel):
     min_safety_stock: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=3)
     critical_threshold: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=3)
     usage_per_serving: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=3)
+    count_package_enabled: bool | None = None
+    count_package_name: str | None = Field(default=None, max_length=40)
+    count_units_per_package: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=3)
     primary_supplier_id: int | None = None
     alternative_supplier_ids: list[int] | None = None
 
@@ -104,13 +122,18 @@ class IngredientOut(BaseModel):
     min_safety_stock: Decimal
     critical_threshold: Decimal
     usage_per_serving: Decimal
+    count_package_enabled: bool
+    count_package_name: str | None
+    count_units_per_package: Decimal | None
+    count_package_version: int
     status: str
     primary_supplier_id: int | None
     supplier_ids: list[int]
     created_at: datetime
 
     _decimals = field_serializer(
-        "min_safety_stock", "critical_threshold", "usage_per_serving"
+        "min_safety_stock", "critical_threshold", "usage_per_serving",
+        "count_units_per_package",
     )(_ser_decimal)
 
 

@@ -344,3 +344,28 @@ its ledger transaction). Rules:
 - Accepted plus rejected quantities in one arriving line cannot exceed its
   current outstanding quantity. Rejected replacements may arrive later;
   rejection itself never discharges the supplier obligation.
+
+## D38 — Counting packages convert into canonical stock units
+
+An ingredient can optionally define a named counting package and a positive
+number of its canonical stock units per full package. A stock entry accepts
+either a direct canonical quantity or `(full_packages, loose_units,
+package_version)`, never both. The server validates nonnegative values,
+converts using exact decimals, and sends the result through the unchanged
+remaining/used ledger protocol. Full packages are whole numbers; loose units
+include contents of opened packages and may exceed one package. Staff must
+not count the contents of a full package twice. Remaining counts verify
+stock confidence; used entries do not.
+
+The conversion configuration has a version. Editing it leaves historical
+stock untouched and invalidates unposted forms using an old version.
+Packaged ledger entries retain the original breakdown and conversion factor,
+so history stays interpretable after configuration changes. Idempotent
+retries match the original breakdown, not only the converted total. Changing
+an ingredient's canonical unit is refused once stock history exists.
+
+Purchasing packages are supplier-specific `supplier_ingredients` fields:
+`package_size`, `purchase_package_name`, and `whole_packages_only`. Counting
+and buying package sizes may differ. These fields are ready for Phase 3
+recommendations, which must round up whole-package orders from the selected
+supplier's package size; no Phase 3 forecast behavior starts here.

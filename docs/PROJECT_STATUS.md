@@ -31,7 +31,7 @@
   an Upcoming Deliveries card on the dashboard; drafts/cancelled never count
   as incoming; physical stock untouched until Step 3 receipts; supplier
   archive blocked while open orders exist; migration `0003_purchase_orders`.
-- **Step 3 (delivery receiving): ✅ COMPLETE, approved for commit** —
+- **Step 3 (delivery receiving): ✅ COMPLETE** (commit `bfcb824`) —
   receipt confirmation per order line (partial deliveries, over-receive
   rejection), atomic ledger integration (`delivery_receipt` rows linked 1:1
   to receipt lines), damaged/rejected quantities tracked separately (never
@@ -84,6 +84,75 @@
   this review covers the existing SQLite application. Pytest emits an existing
   Starlette/httpx deprecation warning.
 
+### Inventory counting enhancement (2026-11-12, approved for commit)
+
+- Added optional ingredient counting packages (`count_package_enabled`, name,
+  positive canonical units per package, version) and a staff choice between
+  full packages plus loose units and direct total stock units. Contents of
+  opened packages are loose units; the UI warns against including the same
+  contents in a full package count. The enhancement itself did not rewrite
+  existing ingredient settings.
+- The server converts exact decimal quantities before the unchanged
+  remaining/used ledger protocol. Remaining counts still verify confidence;
+  used entries deduct stock without refreshing confidence. Ledger rows retain
+  the entered breakdown and conversion snapshot in `counting_json`.
+  Idempotent retries compare that breakdown; stale unposted forms fail after
+  configuration changes. No package balance is stored.
+- Supplier-specific buying package size/name and whole-package requirement
+  live on `supplier_ingredients`, independently of counting configuration.
+  An admin API can set them. Phase 3 recommendation calculation has not begun;
+  its rounding rule for a selected supplier is documented in D38.
+- Migration `0007_inventory_count_packages` is additive to 0006. Existing
+  stock units remain in place; changing a canonical unit after stock history
+  exists is blocked. The development database is at head `0007`; its pre-upgrade
+  backup is `/tmp/stockmate-before-0007-5e1wbmu0`. Tests use isolated
+  databases, and development data was not reseeded. All pre-upgrade rows in
+  16 application tables remain unchanged; the foreign-key check found no
+  violations.
+- Focused packaging and migration checks: 14 passed. Frontend Node: 5 passed;
+  Chrome browser integration: 38 passed, including counting setup, 2 boxes +
+  15 loose units, package-based usage, direct-unit entry, and layout checks.
+  Final full backend suite: **193 passed, 1 existing deprecation warning**.
+  `git diff --check` is clean. Frontend static audit reported only the two
+  pre-existing menu/logout button false positives in `frontend/index.html`;
+  both are wired in `frontend/js/app.js`. No commit, push, deployment, or
+  Phase 3 calculations.
+
+### Guarded fictional development data reset (2026-11-12, approved for commit)
+
+- Confirmed `environment=development`, no `.env` or database URL override,
+  and the exact local SQLite target `backend/stockmate.db` at migration
+  `0007_inventory_count_packages`. All suppliers carried the fictional demo
+  marker. Stopped the local development server before the reset.
+- The guarded `python -m app.reset_demo` command requires the exact absolute
+  database path and confirmation phrase. It checks seed markers, known demo
+  accounts/catalog, migration head, and foreign keys; it creates a timestamped
+  SQLite backup, then removes dependent operational rows and reseeds in one
+  transaction. It never drops schema or touches an unknown/production URL.
+  Verified backup:
+  `backend/backups/stockmate-before-demo-reset-20261111T162914410711Z.db`.
+- Preserved both account rows and password hashes, all 6 login sessions, the
+  original 6 unit rows, Alembic revision, and application code/configuration.
+  Added the `pack` unit. Removed 10 old demo transactions, 4 orders and their
+  6 lines, 4 operational audit entries, 8 old ingredients and stock states,
+  3 suppliers and 7 schedule rules; no receipts existed in this database.
+- Reseeded 8 ingredients, 3 fictional suppliers, 7 schedule rules, and 3
+  purchase orders (5 lines). The 8 opening balances are ledger entries.
+  Korean Noodles: `pc`, Box × 60, 180 pcs opening; Chinese Noodles: `pc`,
+  Box × 50; Eggs: `pc`, Tray × 30; Soup Base: `pack`, Case × 10; Chashu:
+  `pc`, Pack × 20. Primary supplier purchasing packages are separate, and
+  Korean Noodles' alternative supplier uses a 50-piece box. Other demo
+  ingredients retain their suitable stock units without counting packages.
+- Compared the live database with its backup: users, sessions, prior unit
+  rows, and Alembic revision match exactly. SQLite quick check and foreign
+  keys pass. Ledger balances agree with all stock states; 1 Box = 60 pcs and
+  2 Boxes + 15 loose pcs = 135 pcs.
+- Complete tests on isolated databases: **198 backend passed**, **5 frontend
+  passed**, **38 browser integration passed**. The browser run covered dashboard,
+  both stock modes, package counting, supplier scheduling, orders, receiving,
+  history, and responsive layouts. Pytest emitted the existing Starlette/httpx
+  deprecation warning. No commit, push, deployment, or production change.
+
 Phase 0 was approved with three final requirements, now reflected in the docs:
 D15 (SQLite-safe concurrency: `BEGIN IMMEDIATE` + atomic conditional UPDATE +
 bounded retries, no `FOR UPDATE` dependency), D23 (all starting quantities —
@@ -97,7 +166,7 @@ junction row; service validates supplier `active` status).
 |-------|-------|--------|
 | 0 | Planning, architecture, docs (incl. review revision) | ✅ Done (commit `e53898d`) |
 | 1 | Inventory MVP: DB, auth, ingredients, **basic supplier CRUD + assignment**, dual stock entry, ledger, dashboard, confidence timestamps | 🔶 Steps 1–7 of 8 done |
-| 2 | Supplier schedule rules, delivery calendars, cutoff engine, purchase orders, delivery confirmation, supplier reminders (engine part), alternative-supplier ordering | 🔶 Steps 1–2 done (`2a34b14`, `f08e48b`); Step 3 (delivery receiving) done, awaiting commit approval |
+| 2 | Supplier schedule rules, delivery calendars, cutoff engine, purchase orders, delivery confirmation, supplier reminders (engine part), alternative-supplier ordering | 🔶 Steps 1–3 committed (`2a34b14`, `f08e48b`, `bfcb824`) |
 | 3 | Demand forecasting, forecast calendar, status colors, order suggestions, confidence indicators | ⬜ Not started |
 | 4 | Scheduled reminders, in-app notifications, preferences, provider routing | ⬜ Not started |
 | 5 | Analytics, reports, CSV export, simple statistics | ⬜ Not started |

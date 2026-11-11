@@ -75,6 +75,9 @@ def get_supplier(
                 ingredient_name=ingredient.name,
                 ingredient_status=ingredient.status,
                 is_primary=ingredient.primary_supplier_id == supplier_id,
+                package_size=_link.package_size,
+                purchase_package_name=_link.purchase_package_name,
+                whole_packages_only=_link.whole_packages_only,
             )
             for _link, ingredient in links
         ],

@@ -156,7 +156,7 @@ SM.pages.ingredients = {
     }, units.map((u) => ui.el("option", {
       value: u.id, text: `${u.name} (${u.abbreviation})`,
       selected: ingredient?.unit_id === u.id,
-    }))));
+    }))), "Canonical stock unit. Existing stock and ledger entries always use this unit.");
 
     const decimalInput = (key, value) => ui.el("input", {
       class: "input", id: `ingredient-${key}`, type: "number",
@@ -169,6 +169,34 @@ SM.pages.ingredients = {
     addField("usage_per_serving", "Usage per Ramen Serving",
       decimalInput("usage_per_serving", ingredient ? ui.formatQty(ingredient.usage_per_serving) : "1"),
       "How much stock one serving consumes (in the stock unit).");
+
+    addField("count_package_enabled", "Count full packages", ui.el("input", {
+      id: "ingredient-count_package_enabled", type: "checkbox",
+      checked: ingredient?.count_package_enabled || false,
+    }), "Optional counting aid; does not change stored stock or supplier purchase packaging.");
+    const packageFields = ui.el("div");
+    const packageName = ui.el("input", {
+      class: "input", id: "ingredient-count_package_name", type: "text", maxlength: "40",
+      value: ingredient?.count_package_name || "", placeholder: "Box, Pack, Tray…",
+    });
+    const packageSize = ui.el("input", {
+      class: "input", id: "ingredient-count_units_per_package", type: "number",
+      min: "0.001", step: "0.001", inputmode: "decimal",
+      value: ingredient?.count_units_per_package || "", placeholder: "e.g. 60",
+    });
+    packageFields.append(
+      ui.el("div", { class: "field" },
+        ui.el("label", { class: "field__label", for: "ingredient-count_package_name", text: "Counting package name" }),
+        packageName),
+      ui.el("div", { class: "field" },
+        ui.el("label", { class: "field__label", for: "ingredient-count_units_per_package", text: "Stock units per full package" }),
+        packageSize),
+      ui.el("span", { class: "field__hint", text: `Use the canonical stock unit selected above. Supplier purchase package sizes are separate.` }),
+    );
+    const showPackageFields = () => { packageFields.hidden = !fields.count_package_enabled.checked; };
+    fields.count_package_enabled.addEventListener("change", showPackageFields);
+    showPackageFields();
+    form.append(packageFields);
 
     addField("primary_supplier_id", "Primary Supplier", ui.el("select", {
       class: "select", id: "ingredient-primary_supplier_id",
@@ -227,6 +255,14 @@ SM.pages.ingredients = {
         }
         payload.min_safety_stock = text("min_safety_stock") || "0";
         payload.critical_threshold = text("critical_threshold") || "0";
+        payload.count_package_enabled = fields.count_package_enabled.checked;
+        if (payload.count_package_enabled) {
+          payload.count_package_name = packageName.value.trim();
+          payload.count_units_per_package = packageSize.value.trim();
+          if (!payload.count_package_name || !(ui.toMillis(payload.count_units_per_package) > 0)) {
+            throw new SM.ApiError(0, "validation", "Enter a package name and a positive size (up to 3 decimals).");
+          }
+        }
 
         const primary = fields.primary_supplier_id.value;
         payload.primary_supplier_id = primary === "" ? null : Number(primary);

@@ -47,6 +47,11 @@
   box-sizing: border-box;
 }
 
+/* Explicitly hidden form modes must stay hidden even when .field sets display. */
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   margin: 0;

@@ -52,15 +52,36 @@ FICTION_NOTE = "FICTIONAL DEMONSTRATION DATA — not real restaurant inventory."
 
 # name, category, unit abbreviation, opening qty, safety, critical, usage/serving
 DEMO_INGREDIENTS = [
-    ("Korean Noodles",  "Noodles",  "ptn", "240", "80",  "40",  "1"),
-    ("Chinese Noodles", "Noodles",  "ptn", "180", "60",  "30",  "1"),
-    ("Soup Base",       "Soup",     "L",   "45",  "15",  "8",   "0.35"),
-    ("Chashu",          "Toppings", "slc", "500", "160", "80",  "2"),
+    ("Korean Noodles",  "Noodles",  "pc",   "180", "80",  "40",  "1"),
+    ("Chinese Noodles", "Noodles",  "pc",   "180", "60",  "30",  "1"),
+    ("Soup Base",       "Soup",     "pack", "45",  "15",  "8",   "0.1"),
+    ("Chashu",          "Toppings", "pc",   "500", "160", "80",  "2"),
     ("Eggs",            "Toppings", "pc",  "360", "100", "50",  "1"),
     ("Nori",            "Toppings", "sht", "400", "120", "60",  "1"),
     ("Green Onions",    "Produce",  "kg",  "8",   "2",   "1",   "0.02"),
     ("Menma",           "Toppings", "kg",  "12",  "3",   "1.5", "0.03"),
 ]
+
+# Counting packages are ingredient settings in the ingredient's stock unit.
+# These fictional defaults remain editable in Ingredient Management.
+DEMO_COUNT_PACKAGES = {
+    "Korean Noodles": ("Box", "60"),
+    "Chinese Noodles": ("Box", "50"),
+    "Eggs": ("Tray", "30"),
+    "Soup Base": ("Case", "10"),
+    "Chashu": ("Pack", "20"),
+}
+
+# Purchasing packages belong to a specific supplier/ingredient link and can
+# differ from the ingredient's counting package.
+DEMO_PURCHASE_PACKAGES = {
+    (1, "Korean Noodles"): ("Box", "60"),
+    (2, "Korean Noodles"): ("Box", "50"),
+    (2, "Chinese Noodles"): ("Box", "50"),
+    (1, "Soup Base"): ("Case", "10"),
+    (3, "Chashu"): ("Pack", "20"),
+    (3, "Eggs"): ("Tray", "30"),
+}
 
 # supplier index (1-based as in the requirements) -> fictional name
 DEMO_SUPPLIERS = [
@@ -93,6 +114,7 @@ DEMO_UNITS = [
     ("Slice", "slc"),
     ("Sheet", "sht"),
     ("Piece", "pc"),
+    ("Pack", "pack"),
 ]
 
 # General ordering instructions per supplier (Phase 2 Step 1).
@@ -188,7 +210,7 @@ DEMO_SCHEDULES = {
 }
 
 
-def seed_demo_schedules(session: Session) -> dict:
+def seed_demo_schedules(session: Session, *, commit: bool = True) -> dict:
     """Insert fictional supplier schedules. Safe to call repeatedly.
 
     Uses its own marker so databases seeded before Phase 2 Step 1 pick up
@@ -231,7 +253,7 @@ def seed_demo_schedules(session: Session) -> dict:
         key=SCHEDULE_SEED_MARKER_KEY,
         value_json=json.dumps({"version": 1, "note": FICTION_NOTE}),
     ))
-    session.commit()
+    session.commit() if commit else session.flush()
     return {"seeded": True, "schedule_rules": rule_count}
 
 
@@ -241,7 +263,7 @@ def _next_weekday(today, weekday: int):
     return today + timedelta(days=days_ahead or 7)
 
 
-def seed_demo_orders(session: Session) -> dict:
+def seed_demo_orders(session: Session, *, commit: bool = True) -> dict:
     """Insert fictional demo purchase orders (Phase 2 Step 2). Idempotent.
 
     Demonstrates every incoming-stock state: one ORDERED order (uncertain
@@ -310,11 +332,11 @@ def seed_demo_orders(session: Session) -> dict:
         key=ORDER_SEED_MARKER_KEY,
         value_json=json.dumps({"version": 1, "note": FICTION_NOTE}),
     ))
-    session.commit()
+    session.commit() if commit else session.flush()
     return {"seeded": True, "purchase_orders": created}
 
 
-def seed_demo_data(session: Session, settings: Settings) -> dict:
+def seed_demo_data(session: Session, settings: Settings, *, commit: bool = True) -> dict:
     """Insert the fictional demo dataset. Safe to call repeatedly.
 
     Returns a summary dict; ``seeded`` is False when data already existed.
@@ -323,26 +345,30 @@ def seed_demo_data(session: Session, settings: Settings) -> dict:
     if marker is not None:
         return {"seeded": False, "reason": "demo data already present"}
 
+    existing_users = {u.username: u for u in session.scalars(select(User)).all()}
+    if set(existing_users) - {"admin", "staff"}:
+        raise ValueError("Demo seeding cannot run over non-demo user accounts.")
     hasher = PasswordHasher()
-    admin = User(
-        username="admin",
-        password_hash=hasher.hash(DEMO_ADMIN_PASSWORD),
-        role="admin",
-        is_active=True,
-    )
-    staff = User(
-        username="staff",
-        password_hash=hasher.hash(DEMO_STAFF_PASSWORD),
-        role="staff",
-        is_active=True,
-    )
-    session.add_all([admin, staff])
+    for username, role, password in (
+        ("admin", "admin", DEMO_ADMIN_PASSWORD),
+        ("staff", "staff", DEMO_STAFF_PASSWORD),
+    ):
+        user = existing_users.get(username)
+        if user is None:
+            user = User(username=username, password_hash=hasher.hash(password),
+                        role=role, is_active=True)
+            session.add(user)
+            existing_users[username] = user
+        elif user.role != role:
+            raise ValueError("Existing demo account has an unexpected role.")
+    admin = existing_users["admin"]
 
-    units = {}
+    units = {u.abbreviation: u for u in session.scalars(select(Unit)).all()}
     for name, abbr in DEMO_UNITS:
-        unit = Unit(name=name, abbreviation=abbr)
-        session.add(unit)
-        units[abbr] = unit
+        if abbr not in units:
+            unit = Unit(name=name, abbreviation=abbr)
+            session.add(unit)
+            units[abbr] = unit
 
     suppliers = []
     for name, contact, phone, email in DEMO_SUPPLIERS:
@@ -367,6 +393,11 @@ def seed_demo_data(session: Session, settings: Settings) -> dict:
             min_safety_stock=Decimal(safety),
             critical_threshold=Decimal(critical),
             usage_per_serving=Decimal(usage),
+            count_package_enabled=name in DEMO_COUNT_PACKAGES,
+            count_package_name=DEMO_COUNT_PACKAGES[name][0] if name in DEMO_COUNT_PACKAGES else None,
+            count_units_per_package=Decimal(DEMO_COUNT_PACKAGES[name][1])
+            if name in DEMO_COUNT_PACKAGES else None,
+            count_package_version=1 if name in DEMO_COUNT_PACKAGES else 0,
             status="active",
         )
         session.add(ingredient)
@@ -375,9 +406,13 @@ def seed_demo_data(session: Session, settings: Settings) -> dict:
         # Junction rows first: primary + any alternatives (D19/D24).
         supplier_indexes = {PRIMARY_SUPPLIER[name], *ALTERNATIVE_SUPPLIERS.get(name, [])}
         for index in supplier_indexes:
+            purchase_package = DEMO_PURCHASE_PACKAGES.get((index, name))
             session.add(SupplierIngredient(
                 supplier_id=suppliers[index - 1].id,
                 ingredient_id=ingredient.id,
+                purchase_package_name=purchase_package[0] if purchase_package else None,
+                package_size=Decimal(purchase_package[1]) if purchase_package else None,
+                whole_packages_only=bool(purchase_package),
             ))
         session.flush()
 
@@ -413,11 +448,11 @@ def seed_demo_data(session: Session, settings: Settings) -> dict:
         key=SEED_MARKER_KEY,
         value_json=json.dumps({"version": 1, "note": FICTION_NOTE}),
     ))
-    session.commit()
+    session.commit() if commit else session.flush()
 
     # Schedules and orders have their own markers; they run once on fresh DBs.
-    schedule_summary = seed_demo_schedules(session)
-    order_summary = seed_demo_orders(session)
+    schedule_summary = seed_demo_schedules(session, commit=commit)
+    order_summary = seed_demo_orders(session, commit=commit)
 
     return {
         "seeded": True,

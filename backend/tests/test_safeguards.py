@@ -96,7 +96,7 @@ def test_correction_allowed_when_only_consumption_follows(admin, noodles_id):
         headers={"X-CSRF-Token": csrf},
     )
     assert response.status_code == 200
-    assert _balance(client, noodles_id) == Decimal("225")  # 240 - 50 - 10 + 45
+    assert _balance(client, noodles_id) == Decimal("165")  # 180 - 50 - 10 + 45
 
 
 # --- D28: idempotency-key payload conflicts ------------------------------------
@@ -108,7 +108,7 @@ def test_same_key_different_quantity_returns_409(admin, noodles_id):
     conflict = _entry(client, csrf, noodles_id, "used", "25", idempotency_key=key)
     assert conflict.status_code == 409
     assert conflict.json()["error"]["code"] == "idempotency_conflict"
-    assert _balance(client, noodles_id) == Decimal("230")  # only the first applied
+    assert _balance(client, noodles_id) == Decimal("170")  # only the first applied
 
 
 def test_same_key_identical_payload_replays(admin, noodles_id):

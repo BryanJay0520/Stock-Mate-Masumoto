@@ -9,21 +9,34 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_serializer
+from pydantic import BaseModel, Field, field_serializer, model_validator
 
 
 def _ser_decimal(value: Decimal | None) -> str | None:
     return None if value is None else str(value)
 
 
+class PackageCountIn(BaseModel):
+    full_packages: int = Field(ge=0, le=1_000_000)
+    loose_units: Decimal = Field(ge=0, max_digits=14, decimal_places=3)
+    package_version: int = Field(ge=1)
+
+
 class StockEntryRequest(BaseModel):
     ingredient_id: int
     mode: Literal["remaining", "used"]
-    quantity: Decimal = Field(ge=0, max_digits=14, decimal_places=3)
+    quantity: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=3)
+    package_count: PackageCountIn | None = None
     reason: str | None = Field(default=None, max_length=40)
     idempotency_key: str = Field(min_length=8, max_length=80)
     confirmed: bool = False
     allow_negative: bool = False  # honored for administrators only
+
+    @model_validator(mode="after")
+    def one_counting_method(self):
+        if (self.quantity is None) == (self.package_count is None):
+            raise ValueError("Provide either a stock-unit quantity or a package count.")
+        return self
 
 
 class CorrectionRequest(BaseModel):
@@ -47,6 +60,7 @@ class TransactionOut(BaseModel):
     created_at: datetime
     idempotency_key: str | None
     supersedes_id: int | None
+    counting_breakdown: dict | None = None
 
     _decimals = field_serializer("quantity_delta", "resulting_quantity", "previous_quantity")(
         _ser_decimal
@@ -69,6 +83,10 @@ class StockOut(BaseModel):
     last_counted_by: int | None
     last_transaction_at: datetime | None
     confidence: str
+    count_package_enabled: bool
+    count_package_name: str | None
+    count_units_per_package: Decimal | None
+    count_package_version: int
     # Pending supply from purchase orders (D36) — server-computed, never
     # part of the physical balance. ``projected_quantity`` is an estimate
     # (available + incoming), always distinct from ``current_quantity``.
@@ -81,7 +99,7 @@ class StockOut(BaseModel):
 
     _decimals = field_serializer(
         "current_quantity", "incoming_quantity", "incoming_ordered_quantity",
-        "incoming_confirmed_quantity", "projected_quantity",
+        "incoming_confirmed_quantity", "projected_quantity", "count_units_per_package",
     )(_ser_decimal)
 
 

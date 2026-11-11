@@ -60,6 +60,11 @@ class Ingredient(TimestampMixin, Base):
     min_safety_stock: Mapped[Decimal] = mapped_column(Numeric(14, 3), default=0, nullable=False)
     critical_threshold: Mapped[Decimal] = mapped_column(Numeric(14, 3), default=0, nullable=False)
     usage_per_serving: Mapped[Decimal] = mapped_column(Numeric(14, 3), default=1, nullable=False)
+    count_package_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False,
+                                                         server_default="0")
+    count_package_name: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    count_units_per_package: Mapped[Decimal | None] = mapped_column(Numeric(14, 3), nullable=True)
+    count_package_version: Mapped[int] = mapped_column(default=0, nullable=False, server_default="0")
     primary_supplier_id: Mapped[int | None] = mapped_column(nullable=True)
     status: Mapped[str] = mapped_column(
         String(20), default=STATUS_ACTIVE, nullable=False, index=True

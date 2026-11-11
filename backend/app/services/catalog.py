@@ -80,9 +80,41 @@ def _ingredient_snapshot(ingredient: Ingredient) -> dict:
         "min_safety_stock": str(ingredient.min_safety_stock),
         "critical_threshold": str(ingredient.critical_threshold),
         "usage_per_serving": str(ingredient.usage_per_serving),
+        "count_package_enabled": ingredient.count_package_enabled,
+        "count_package_name": ingredient.count_package_name,
+        "count_units_per_package": str(ingredient.count_units_per_package)
+        if ingredient.count_units_per_package is not None else None,
+        "count_package_version": ingredient.count_package_version,
         "primary_supplier_id": ingredient.primary_supplier_id,
         "status": ingredient.status,
     }
+
+
+def _set_count_packaging(ingredient: Ingredient, data) -> None:
+    """Count conversion configuration; never convert an existing balance."""
+    fields = data.model_fields_set
+    if not fields.intersection({"count_package_enabled", "count_package_name",
+                                "count_units_per_package"}):
+        return
+    enabled = data.count_package_enabled
+    if enabled is None:
+        enabled = ingredient.count_package_enabled
+    name = data.count_package_name if "count_package_name" in fields else ingredient.count_package_name
+    size = (data.count_units_per_package if "count_units_per_package" in fields
+            else ingredient.count_units_per_package)
+    if enabled:
+        name = name.strip() if name is not None else ""
+        if not name or size is None or size <= 0:
+            raise ApiError(400, "invalid_count_packaging",
+                           "Enabled counting packages need a name and a positive size.")
+    else:
+        name, size = None, None
+    if (ingredient.count_package_enabled, ingredient.count_package_name,
+            ingredient.count_units_per_package) != (enabled, name, size):
+        ingredient.count_package_enabled = enabled
+        ingredient.count_package_name = name
+        ingredient.count_units_per_package = size
+        ingredient.count_package_version = (ingredient.count_package_version or 0) + 1
 
 
 # --- Suppliers --------------------------------------------------------------
@@ -281,6 +313,7 @@ def create_ingredient(db: Session, *, admin: User, data, settings: Settings) -> 
             usage_per_serving=data.usage_per_serving,
             status="active",
         )
+        _set_count_packaging(ingredient, data)
         db.add(ingredient)
         db.flush()
 
@@ -347,6 +380,12 @@ def update_ingredient(db: Session, *, admin: User, ingredient_id: int, data) -> 
         if data.unit_id is not None:
             if db.get(Unit, data.unit_id) is None:
                 raise ApiError(400, "unit_not_found", f"Unit {data.unit_id} does not exist.")
+            if data.unit_id != ingredient.unit_id and db.scalar(
+                select(InventoryTransaction.id).where(
+                    InventoryTransaction.ingredient_id == ingredient.id).limit(1)
+            ) is not None:
+                raise ApiError(409, "unit_change_with_history",
+                               "The stock unit cannot change after stock history exists.")
             ingredient.unit_id = data.unit_id
         if data.min_safety_stock is not None:
             ingredient.min_safety_stock = data.min_safety_stock
@@ -354,6 +393,7 @@ def update_ingredient(db: Session, *, admin: User, ingredient_id: int, data) -> 
             ingredient.critical_threshold = data.critical_threshold
         if data.usage_per_serving is not None:
             ingredient.usage_per_serving = data.usage_per_serving
+        _set_count_packaging(ingredient, data)
 
         # Supplier reassignment: primary changes only via this validated path.
         if data.primary_supplier_id is not None or data.alternative_supplier_ids is not None:
@@ -378,6 +418,40 @@ def update_ingredient(db: Session, *, admin: User, ingredient_id: int, data) -> 
     ingredient = _run_atomic(db, work)
     db.refresh(ingredient)  # see create_ingredient: refresh stale relationships
     return ingredient
+
+
+def update_purchase_packaging(db: Session, *, admin: User, ingredient_id: int,
+                              supplier_id: int, data) -> SupplierIngredient:
+    """Store a supplier's buying multiple without touching count settings or stock."""
+    _begin_write_transaction(db)
+
+    def work() -> SupplierIngredient:
+        link = db.get(SupplierIngredient, (supplier_id, ingredient_id))
+        if link is None:
+            raise ApiError(404, "supplier_link_not_found",
+                           "This supplier is not assigned to the ingredient.")
+        name = data.purchase_package_name.strip() if data.purchase_package_name else None
+        if data.package_size is None:
+            if name or data.whole_packages_only:
+                raise ApiError(400, "invalid_purchase_packaging",
+                               "A package size is required for whole-package purchasing.")
+        elif not name:
+            raise ApiError(400, "invalid_purchase_packaging",
+                           "A purchasing package name is required with its size.")
+        before = {"package_size": str(link.package_size) if link.package_size else None,
+                  "purchase_package_name": link.purchase_package_name,
+                  "whole_packages_only": link.whole_packages_only}
+        link.package_size = data.package_size
+        link.purchase_package_name = name
+        link.whole_packages_only = data.whole_packages_only
+        after = {"package_size": str(link.package_size) if link.package_size else None,
+                 "purchase_package_name": link.purchase_package_name,
+                 "whole_packages_only": link.whole_packages_only}
+        _audit(db, admin, "supplier_ingredient.purchase_packaging", "ingredient",
+               ingredient_id, before, {"supplier_id": supplier_id, **after})
+        return link
+
+    return _run_atomic(db, work)
 
 
 def _set_ingredient_status(db: Session, *, admin: User, ingredient_id: int,
