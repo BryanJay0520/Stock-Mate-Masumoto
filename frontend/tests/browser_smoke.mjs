@@ -480,6 +480,105 @@ async function staffScheduleTests() {
   });
 }
 
+async function orderTests() {
+  await test("inventory shows seeded incoming stock (orders never touch available)", async () => {
+    await navigate("/inventory");
+    await waitFor(`document.querySelectorAll("#view tbody tr").length === 8`);
+    const rowText = await evaluate(`(() => {
+      const row = [...document.querySelectorAll("#view tbody tr")]
+        .find(r => r.textContent.includes("Korean Noodles"));
+      return row ? row.textContent : "";
+    })()`);
+    assert(rowText.includes("100"), `no incoming qty for Korean Noodles: ${rowText.slice(0, 250)}`);
+    assert(rowText.includes("Ordered — Not Received"), `no incoming badge: ${rowText.slice(0, 250)}`);
+    assert(rowText.includes("1000"), `no projected qty (900 + 100): ${rowText.slice(0, 250)}`);
+    // Server-side truth: available stays physical, incoming is separate.
+    const stock = await apiAsSession("/inventory/stock");
+    const noodles = stock.find((r) => r.ingredient_name === "Korean Noodles");
+    assert(noodles.current_quantity === "900.000", `available ${noodles.current_quantity}`);
+    assert(noodles.incoming_quantity === "100.000", `incoming ${noodles.incoming_quantity}`);
+    assert(noodles.projected_quantity === "1000.000", `projected ${noodles.projected_quantity}`);
+    // Draft orders (Dragon Noodle Works) must NOT count as incoming.
+    const chinese = stock.find((r) => r.ingredient_name === "Chinese Noodles");
+    assert(chinese.incoming_quantity === "0.000", `draft counted as incoming: ${chinese.incoming_quantity}`);
+    await screenshot("inventory-incoming");
+  });
+
+  await test("dashboard lists pending deliveries, excluding drafts", async () => {
+    await navigate("/dashboard");
+    await waitFor(`document.querySelectorAll(".stat-card").length === 4`);
+    await waitFor(`(() => {
+      return [...document.querySelectorAll("#view h2")]
+        .some(h => h.textContent === "Upcoming Deliveries");
+    })()`);
+    const cardText = await evaluate(`(() => {
+      const heading = [...document.querySelectorAll("#view h2")]
+        .find(h => h.textContent === "Upcoming Deliveries");
+      return heading.parentElement.textContent;
+    })()`);
+    assert(cardText.includes("Tokyo Noodle Co."), `Tokyo order missing: ${cardText.slice(0, 300)}`);
+    assert(cardText.includes("Masumoto Provisions"), `Masumoto order missing: ${cardText.slice(0, 300)}`);
+    assert(!cardText.includes("Dragon Noodle Works"), "draft order leaked into deliveries");
+    await screenshot("dashboard-deliveries");
+  });
+
+  await test("admin creates an order, marks it ordered, incoming updates", async () => {
+    await navigate("/orders");
+    await waitFor(`document.querySelector("#view").textContent.includes("Tokyo Noodle Co.")`);
+    await evaluate(`[...document.querySelectorAll("#view button")].find(b => b.textContent === "New Order").click()`);
+    await waitFor(`document.getElementById("order-supplier")`);
+    await evaluate(`(() => {
+      const supplier = document.getElementById("order-supplier");
+      supplier.value = [...supplier.options].find(o => o.textContent.includes("Masumoto")).value;
+      supplier.dispatchEvent(new Event("change", {bubbles: true}));
+      const nextWeek = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+      document.getElementById("order-date").value = nextWeek;
+    })()`);
+    await sleep(300); // let the ingredient select refill for Masumoto
+    await evaluate(`(() => {
+      const overlay = document.querySelector(".modal-overlay");
+      const ingredient = overlay.querySelector("select.select[aria-label=Ingredient]");
+      ingredient.value = [...ingredient.options].find(o => o.textContent.includes("Eggs")).value;
+      const qty = overlay.querySelector("input[aria-label=Quantity]");
+      qty.value = "25";
+      [...overlay.querySelectorAll("button")].find(b => b.textContent === "Create Order").click();
+    })()`);
+    await waitFor(`document.getElementById("toasts").textContent.includes("Draft order created")`);
+    // Open the new draft (the Masumoto row with a Draft badge) and order it.
+    await waitFor(`(() => {
+      return [...document.querySelectorAll("#view tbody tr")]
+        .some(r => r.textContent.includes("Masumoto Provisions") && r.textContent.includes("Draft"));
+    })()`);
+    await evaluate(`(() => {
+      const row = [...document.querySelectorAll("#view tbody tr")]
+        .find(r => r.textContent.includes("Masumoto Provisions") && r.textContent.includes("Draft"));
+      [...row.querySelectorAll("button")].find(b => b.textContent === "View").click();
+    })()`);
+    await waitFor(`(() => {
+      const o = [...document.querySelectorAll(".modal-overlay")].pop();
+      return o && [...o.querySelectorAll("button")].some(b => b.textContent === "Mark Ordered");
+    })()`);
+    await evaluate(`(() => {
+      const overlay = [...document.querySelectorAll(".modal-overlay")].pop();
+      [...overlay.querySelectorAll("button")].find(b => b.textContent === "Mark Ordered").click();
+    })()`);
+    await waitFor(`document.getElementById("toasts").textContent.includes("updated")`);
+    // Eggs: 120 confirmed (seeded) + 25 newly ordered = 145 incoming.
+    await navigate("/inventory");
+    await waitFor(`document.querySelectorAll("#view tbody tr").length === 8`);
+    const stock = await apiAsSession("/inventory/stock");
+    const eggs = stock.find((r) => r.ingredient_name === "Eggs");
+    assert(eggs.incoming_quantity === "145.000", `Eggs incoming ${eggs.incoming_quantity}`);
+    const rowText = await evaluate(`(() => {
+      const row = [...document.querySelectorAll("#view tbody tr")]
+        .find(r => r.textContent.includes("Eggs"));
+      return row ? row.textContent : "";
+    })()`);
+    assert(rowText.includes("145"), `Eggs row missing incoming 145: ${rowText.slice(0, 250)}`);
+    assert(rowText.includes("Confirmed"), `Eggs row missing Confirmed badge: ${rowText.slice(0, 250)}`);
+  });
+}
+
 async function ingredientTests() {
   await test("admin can create an ingredient with an opening balance", async () => {
     await navigate("/ingredients");
@@ -545,6 +644,29 @@ async function correctionTests() {
     })()`);
     await waitFor(`document.querySelector(".modal-overlay .alert--error")`);
     await assertText(".modal-overlay .alert--error", "newer physical stock count");
+    await evaluate(`document.querySelector(".modal-overlay").remove()`);
+  });
+}
+
+async function staffOrderTests() {
+  await test("staff sees purchase orders read-mostly, without cancel", async () => {
+    // Already logged in as staff (staffScheduleTests ends on a staff session).
+    assert(await evaluate(`Boolean(document.querySelector('.nav-link[data-route="orders"]'))`),
+      "staff nav should include Purchase Orders");
+    await navigate("/orders");
+    await waitFor(`document.querySelector("#view").textContent.includes("Tokyo Noodle Co.")`);
+    await evaluate(`(() => {
+      const row = [...document.querySelectorAll("#view tbody tr")]
+        .find(r => r.textContent.includes("Tokyo Noodle Co."));
+      [...row.querySelectorAll("button")].find(b => b.textContent === "View").click();
+    })()`);
+    await waitFor(`document.querySelector(".modal-overlay")?.textContent.includes("Purchase Order #")`);
+    const labels = await evaluate(`(() => {
+      const overlay = [...document.querySelectorAll(".modal-overlay")].pop();
+      return [...overlay.querySelectorAll("button")].map(b => b.textContent);
+    })()`);
+    assert(!labels.includes("Cancel Order"), `staff should not see Cancel Order: ${labels}`);
+    // Staff CAN advance the workflow (Mark Ordered / Confirm), per requirements.
     await evaluate(`document.querySelector(".modal-overlay").remove()`);
   });
 }
@@ -635,11 +757,13 @@ try {
   await inventoryTests();
   await supplierTests();
   await scheduleTests();
+  await orderTests();
   await ingredientTests();
   await correctionTests();
   await responsiveTests();
   await staffTests();
   await staffScheduleTests();
+  await staffOrderTests();
 } catch (error) {
   console.error("HARNESS ERROR:", error);
   results.push({ name: "harness", status: "FAIL", error: String(error) });

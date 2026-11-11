@@ -16,14 +16,22 @@
 
 **Phase 2 — Supplier Scheduling & Ordering: IN PROGRESS**
 
-- **Step 1 (supplier delivery scheduling): ✅ COMPLETE, awaiting approval to
-  commit** — per-supplier weekly schedule rules (cutoff offset+time, order
-  window, reminder, contact action, instructions, timezone), additive
-  ingredient overrides (D32), date-specific calendar exceptions (D34),
-  scheduling engine with real tz-aware dates and statuses (D33), supplier
-  general instructions, scheduling UI in the Supplier Management page,
-  **128 backend + 5 Node unit + 28/28 real browser tests passing**.
-  Also fixed a genuine router race (torn render on overlapping navigations).
+- **Step 1 (supplier delivery scheduling): ✅ COMPLETE** (commit `2a34b14`) —
+  per-supplier weekly schedule rules (cutoff offset+time, order window,
+  reminder, contact action, instructions, timezone), additive ingredient
+  overrides (D32), date-specific calendar exceptions (D34), scheduling
+  engine with real tz-aware dates and statuses (D33), supplier general
+  instructions, scheduling UI in the Supplier Management page. Also fixed a
+  genuine router race (torn render on overlapping navigations).
+- **Step 2 (purchase orders + incoming stock): ✅ COMPLETE, awaiting approval
+  to commit** — purchase orders with line items (statuses draft → ordered →
+  confirmed → partially delivered / delayed → delivered, cancelled),
+  staff create/advance orders, admin-only cancel; incoming-stock indicators
+  on Inventory (Available vs Incoming vs clearly-labeled Projected, D36) and
+  an Upcoming Deliveries card on the dashboard; drafts/cancelled never count
+  as incoming; physical stock untouched until Step 3 receipts; supplier
+  archive blocked while open orders exist; migration `0003_purchase_orders`.
+  **149 backend + 5 Node unit + 32/32 real browser tests passing.**
 
 Phase 0 was approved with three final requirements, now reflected in the docs:
 D15 (SQLite-safe concurrency: `BEGIN IMMEDIATE` + atomic conditional UPDATE +
@@ -38,7 +46,7 @@ junction row; service validates supplier `active` status).
 |-------|-------|--------|
 | 0 | Planning, architecture, docs (incl. review revision) | ✅ Done (commit `e53898d`) |
 | 1 | Inventory MVP: DB, auth, ingredients, **basic supplier CRUD + assignment**, dual stock entry, ledger, dashboard, confidence timestamps | 🔶 Steps 1–7 of 8 done |
-| 2 | Supplier schedule rules, delivery calendars, cutoff engine, purchase orders, delivery confirmation, supplier reminders (engine part), alternative-supplier ordering | 🔶 Step 1 (scheduling) done, awaiting commit approval |
+| 2 | Supplier schedule rules, delivery calendars, cutoff engine, purchase orders, delivery confirmation, supplier reminders (engine part), alternative-supplier ordering | 🔶 Step 1 (scheduling, `2a34b14`) done; Step 2 (purchase orders + incoming stock) done, awaiting commit approval |
 | 3 | Demand forecasting, forecast calendar, status colors, order suggestions, confidence indicators | ⬜ Not started |
 | 4 | Scheduled reminders, in-app notifications, preferences, provider routing | ⬜ Not started |
 | 5 | Analytics, reports, CSV export, simple statistics | ⬜ Not started |

@@ -16,7 +16,7 @@ Run as a CLI from the backend directory:
 """
 
 import json
-from datetime import datetime, time, timezone
+from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -30,6 +30,8 @@ from app.models import (
     Ingredient,
     IngredientStockState,
     InventoryTransaction,
+    PurchaseOrder,
+    PurchaseOrderItem,
     Supplier,
     SupplierIngredient,
     SupplierScheduleRule,
@@ -39,6 +41,7 @@ from app.models import (
 
 SEED_MARKER_KEY = "demo_data_seeded"
 SCHEDULE_SEED_MARKER_KEY = "demo_schedules_seeded"
+ORDER_SEED_MARKER_KEY = "demo_orders_seeded"
 
 # Dev-only credentials for the fictional demo accounts. NOT secrets — local
 # development convenience only; real deployments must create their own users.
@@ -232,6 +235,85 @@ def seed_demo_schedules(session: Session) -> dict:
     return {"seeded": True, "schedule_rules": rule_count}
 
 
+def _next_weekday(today, weekday: int):
+    """The next date strictly after ``today`` falling on ``weekday``."""
+    days_ahead = (weekday - today.weekday()) % 7
+    return today + timedelta(days=days_ahead or 7)
+
+
+def seed_demo_orders(session: Session) -> dict:
+    """Insert fictional demo purchase orders (Phase 2 Step 2). Idempotent.
+
+    Demonstrates every incoming-stock state: one ORDERED order (uncertain
+    incoming), one CONFIRMED order (reliable incoming), and one DRAFT that
+    must NEVER count as supply (D36).
+    """
+    marker = session.get(AppSetting, ORDER_SEED_MARKER_KEY)
+    if marker is not None:
+        return {"seeded": False, "reason": "demo orders already present"}
+
+    suppliers = {s.name: s for s in session.scalars(select(Supplier)).all()}
+    ingredients = {i.name: i for i in session.scalars(select(Ingredient)).all()}
+    admin = session.scalar(select(User).where(User.username == "admin"))
+    if not suppliers or not ingredients or admin is None:
+        return {"seeded": False, "reason": "demo base data missing"}
+
+    now = datetime.now(timezone.utc)
+    today = now.date()
+
+    def order(supplier_name, status, delivery_weekday, notes, items):
+        supplier = suppliers.get(supplier_name)
+        if supplier is None:
+            return False
+        purchase_order = PurchaseOrder(
+            supplier_id=supplier.id,
+            status=status,
+            expected_delivery_date=_next_weekday(today, delivery_weekday),
+            created_by=admin.id,
+            ordered_by=admin.id if status != "draft" else None,
+            ordered_at=now if status != "draft" else None,
+            notes=f"{FICTION_NOTE} {notes}",
+        )
+        purchase_order.items = [
+            PurchaseOrderItem(
+                ingredient_id=ingredients[name].id,
+                quantity_ordered=Decimal(quantity),
+                quantity_received=Decimal("0"),
+            )
+            for name, quantity in items
+            if name in ingredients
+        ]
+        session.add(purchase_order)
+        return True
+
+    created = 0
+    # Ordered, not yet confirmed by the supplier — UNCERTAIN incoming.
+    created += order(
+        "Tokyo Noodle Co.", "ordered", 0,  # next Monday
+        "Weekly noodle order placed by phone.",
+        [("Korean Noodles", "100"), ("Soup Base", "20")],
+    )
+    # Confirmed by the supplier — RELIABLE incoming.
+    created += order(
+        "Masumoto Provisions", "confirmed", 5,  # next Saturday
+        "Confirmed via LINE.",
+        [("Chashu", "200"), ("Eggs", "120")],
+    )
+    # Draft only — must NEVER appear as incoming stock (D36).
+    created += order(
+        "Dragon Noodle Works", "draft", 1,  # next Tuesday
+        "Draft — waiting for the weekly count before ordering.",
+        [("Chinese Noodles", "50")],
+    )
+
+    session.add(AppSetting(
+        key=ORDER_SEED_MARKER_KEY,
+        value_json=json.dumps({"version": 1, "note": FICTION_NOTE}),
+    ))
+    session.commit()
+    return {"seeded": True, "purchase_orders": created}
+
+
 def seed_demo_data(session: Session, settings: Settings) -> dict:
     """Insert the fictional demo dataset. Safe to call repeatedly.
 
@@ -333,8 +415,9 @@ def seed_demo_data(session: Session, settings: Settings) -> dict:
     ))
     session.commit()
 
-    # Schedules have their own marker; this runs once on fresh databases.
+    # Schedules and orders have their own markers; they run once on fresh DBs.
     schedule_summary = seed_demo_schedules(session)
+    order_summary = seed_demo_orders(session)
 
     return {
         "seeded": True,
@@ -344,6 +427,7 @@ def seed_demo_data(session: Session, settings: Settings) -> dict:
         "ingredients": ingredient_count,
         "opening_balance_transactions": ingredient_count,
         "schedule_rules": schedule_summary.get("schedule_rules", 0),
+        "purchase_orders": order_summary.get("purchase_orders", 0),
     }
 
 
@@ -359,11 +443,13 @@ def main() -> None:
     session_factory = create_session_factory(engine)
     with session_factory() as session:
         summary = seed_demo_data(session, settings)
-        # Also covers databases seeded before supplier scheduling existed.
+        # Also covers databases seeded before scheduling/orders existed.
         schedule_summary = seed_demo_schedules(session)
+        order_summary = seed_demo_orders(session)
 
     print("StockMate demo seed:", summary)
     print("StockMate schedule seed:", schedule_summary)
+    print("StockMate order seed:", order_summary)
     if summary["seeded"]:
         print(f"Demo login (dev only): admin / {DEMO_ADMIN_PASSWORD}")
         print(f"                       staff / {DEMO_STAFF_PASSWORD}")

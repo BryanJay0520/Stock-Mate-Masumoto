@@ -177,6 +177,16 @@ def test_reassign_then_archive_then_reactivate(admin, ids):
         assert response.status_code == 200
         assert response.json()["primary_supplier_id"] == dragon
 
+    # Archiving is also blocked while the supplier has open purchase orders
+    # (Phase 2 Step 2), so cancel Tokyo's demo orders first.
+    orders = client.get(f"/api/v1/purchase-orders?supplier_id={tokyo}").json()
+    for order in orders:
+        if order["status"] not in ("delivered", "cancelled"):
+            cancelled = _post(
+                client, csrf, f"/api/v1/purchase-orders/{order['id']}/cancel", {}
+            )
+            assert cancelled.status_code == 200
+
     archived = _post(client, csrf, f"/api/v1/suppliers/{tokyo}/archive", {})
     assert archived.status_code == 200
     assert archived.json()["status"] == "archived"

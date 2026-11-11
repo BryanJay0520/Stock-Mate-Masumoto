@@ -57,7 +57,8 @@ SM.pages.inventory = {
 
       const table = ui.el("table", { class: "table table--responsive" },
         ui.el("thead", {}, ui.el("tr", {},
-          ...["Ingredient", "Category", "Available", "Safety Stock", "Status",
+          ...["Ingredient", "Category", "Available", "Incoming", "Expected Arrival",
+            "Projected", "Safety Stock", "Status",
             "Confidence", "Primary Supplier", "Last Counted"].map((label) => ui.el("th", { text: label })),
         )),
       );
@@ -71,6 +72,29 @@ SM.pages.inventory = {
           ui.el("td", { "data-label": "Category", text: item.category }),
           ui.el("td", { "data-label": "Available" },
             ui.el("strong", { text: ui.formatQty(item.current_quantity) }), ` ${item.unit}`),
+          (() => {
+            const incoming = SM.data.incomingInfo(item);
+            return ui.el("td", { "data-label": "Incoming" },
+              incoming
+                ? [ui.el("strong", { text: ui.formatQty(item.incoming_quantity) }), ` ${item.unit} `,
+                    ui.badge(incoming.label, incoming.kind)]
+                : "—");
+          })(),
+          (() => {
+            const incoming = SM.data.incomingInfo(item);
+            return ui.el("td", {
+              "data-label": "Expected Arrival",
+              text: incoming && incoming.expected ? ui.formatDateOnly(incoming.expected) : "—",
+            });
+          })(),
+          ui.el("td", { "data-label": "Projected" },
+            SM.data.incomingInfo(item)
+              ? ui.el("span", {
+                  class: "text-muted",
+                  title: "Projected = available + incoming. Not physical stock.",
+                  text: ui.formatQty(item.projected_quantity),
+                })
+              : "—"),
           ui.el("td", {
             "data-label": "Safety Stock",
             text: item.ingredient ? ui.formatQty(item.ingredient.min_safety_stock) : "—",
@@ -88,7 +112,7 @@ SM.pages.inventory = {
       table.append(tbody);
       tableCard.append(ui.el("div", { class: "table-wrap" }, table));
       tableCard.append(ui.el("p", { class: "text-muted text-small" },
-        "Confidence describes how fresh the physical stock count is — it is separate from stock availability."));
+        "Confidence describes how fresh the physical stock count is — it is separate from stock availability. Incoming shows ordered-but-not-received quantities; Projected (available + incoming) is an estimate, never physical stock."));
     };
     refresh();
   },

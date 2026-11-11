@@ -10,6 +10,7 @@ SM.app = {
     inventory: { title: "Inventory", label: "Inventory" },
     entry: { title: "Daily Stock Entry", label: "Daily Stock Entry" },
     suppliers: { title: "Suppliers", label: "Suppliers" },
+    orders: { title: "Purchase Orders", label: "Purchase Orders" },
     ingredients: { title: "Ingredients", label: "Ingredients" },
     history: { title: "Transaction History", label: "Transaction History" },
     settings: { title: "Settings / Account", label: "Settings / Account" },

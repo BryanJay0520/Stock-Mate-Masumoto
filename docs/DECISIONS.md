@@ -282,3 +282,25 @@ instant; the inclusive-cutoff rule (D16) applies to that instant. Contact
 deadlines and reminders use the same representation (0–13 days; a reminder
 must land strictly before the cutoff, a contact deadline strictly before
 the delivery day).
+
+## D36 — Available / incoming / projected are three separate stock numbers
+
+Physical availability (`current_quantity`, the ledger cache per D14) is never
+mixed with on-order quantities. The stock API additionally exposes per
+ingredient: `incoming_quantity` split into `incoming_ordered_quantity`
+(statuses `ordered`/`delayed` — uncertain) and `incoming_confirmed_quantity`
+(statuses `confirmed`/`partially_delivered` — reliable), plus
+`expected_delivery` (earliest pending delivery date) and `incoming_status`
+(worst case across pending orders: delayed > confirmed > ordered).
+`projected_quantity` = available + incoming and must always be labeled as a
+projection in the UI — it is never physical stock.
+
+Rules: (1) `draft` and `cancelled` orders NEVER contribute to incoming;
+(2) pending = `quantity_ordered − quantity_received` per order item,
+aggregated server-side in SQL (GROUP BY ingredient/status) — never summed on
+the client; (3) purchase orders never write to the ledger — physical stock
+changes only through delivery receipts (Phase 2 Step 3) via the existing
+ledger service; (4) `quantity_received ≤ quantity_ordered` is enforced by a
+database CHECK so Step 3 receipts cannot over-receive silently; (5) supplier
+archiving is blocked (409 `archive_blocked`) while open purchase orders
+exist — open = any status except `delivered`/`cancelled`.

@@ -8,10 +8,12 @@
 - POST /inventory/verify/repair             repair cache FROM ledger (admin, CSRF)
 
 All stock math lives in app/services/inventory.py — this module only handles
-HTTP concerns (auth, CSRF, request/response mapping).
+HTTP concerns (auth, CSRF, request/response mapping). Incoming/projected
+quantities on /inventory/stock come from app/services/ordering.py (D36).
 """
 
 from datetime import date
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy import select
@@ -31,6 +33,7 @@ from app.schemas.inventory import (
     TransactionOut,
 )
 from app.services import inventory as ledger
+from app.services import ordering
 
 router = APIRouter()
 
@@ -63,8 +66,12 @@ def current_stock(
         .join(Unit, Ingredient.unit_id == Unit.id)
         .order_by(Ingredient.name)
     ).all()
-    return [
-        StockOut(
+    # Pending purchase-order supply, computed server-side (D36).
+    incoming = ordering.incoming_by_ingredient(db)
+    result = []
+    for ingredient, state, unit in rows:
+        bucket = incoming.get(ingredient.id)
+        result.append(StockOut(
             ingredient_id=ingredient.id,
             ingredient_name=ingredient.name,
             category=ingredient.category,
@@ -75,9 +82,20 @@ def current_stock(
             last_counted_by=state.last_counted_by,
             last_transaction_at=state.last_transaction_at,
             confidence=state.confidence,
-        )
-        for ingredient, state, unit in rows
-    ]
+            incoming_quantity=bucket["incoming_quantity"] if bucket else Decimal("0.000"),
+            incoming_ordered_quantity=(
+                bucket["incoming_ordered_quantity"] if bucket else Decimal("0.000")
+            ),
+            incoming_confirmed_quantity=(
+                bucket["incoming_confirmed_quantity"] if bucket else Decimal("0.000")
+            ),
+            expected_delivery=bucket["expected_delivery"] if bucket else None,
+            incoming_status=bucket["incoming_status"] if bucket else None,
+            projected_quantity=ordering.projected_quantity(
+                state.current_quantity, bucket
+            ),
+        ))
+    return result
 
 
 @router.post(

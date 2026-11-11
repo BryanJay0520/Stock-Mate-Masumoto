@@ -166,6 +166,23 @@ def archive_supplier(db: Session, *, admin: User, supplier_id: int) -> Supplier:
                 "Reassign a new primary supplier for them first.",
             )
 
+        # Guard 2 (Phase 2): never archive a supplier with OPEN purchase
+        # orders — cancel or receive them first.
+        from app.models.ordering import OPEN_ORDER_STATUSES, PurchaseOrder
+        open_orders = db.scalars(
+            select(PurchaseOrder).where(
+                PurchaseOrder.supplier_id == supplier_id,
+                PurchaseOrder.status.in_(OPEN_ORDER_STATUSES),
+            )
+        ).all()
+        if open_orders:
+            ids = ", ".join(f"#{o.id} ({o.status})" for o in open_orders)
+            raise ApiError(
+                409, "archive_blocked",
+                f"Supplier has open purchase orders: {ids}. "
+                "Cancel them or confirm their deliveries first.",
+            )
+
         before = _supplier_snapshot(supplier)
         supplier.status = "archived"
         _audit(db, admin, "supplier.archive", "supplier", supplier.id, before,

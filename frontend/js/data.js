@@ -57,6 +57,21 @@ SM.data = {
     };
   },
 
+  // INCOMING (on-order) stock — separate from physical availability (D36).
+  // Returns null when nothing is on order; drafts and cancelled orders
+  // never reach these fields because the backend excludes them.
+  incomingInfo(item) {
+    const qty = SM.ui.toMillis(item.incoming_quantity);
+    if (qty === null || qty <= 0) return null;
+    const statusLabels = {
+      ordered: { kind: "info", label: "Ordered — Not Received" },
+      confirmed: { kind: "safe", label: "Confirmed" },
+      delayed: { kind: "warning", label: "Delayed" },
+    };
+    const status = statusLabels[item.incoming_status] || { kind: "info", label: "On Order" };
+    return { ...status, expected: item.expected_delivery || null };
+  },
+
   stockStatusBadge(item) {
     const status = this.stockStatus(item);
     return SM.ui.badge(status.label, status.kind);

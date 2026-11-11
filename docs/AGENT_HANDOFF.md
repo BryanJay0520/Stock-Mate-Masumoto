@@ -7,10 +7,11 @@
 
 - **Current phase:** Phase 2 — Supplier Scheduling & Ordering.
 - **Progress:** Phase 1 complete (through `a67d07e`). Phase 2 Step 1
-  (supplier delivery scheduling) is **implemented and fully tested —
-  128 backend + 5 Node unit + 28/28 real browser tests passing**,
+  (supplier delivery scheduling) committed as `2a34b14`. Phase 2 Step 2
+  (purchase orders + incoming stock indicators) is **implemented and fully
+  tested — 149 backend + 5 Node unit + 32/32 real browser tests passing**,
   uncommitted at time of writing. **Awaiting user approval to commit;
-  Phase 2 Step 2 (purchase orders) has NOT started.**
+  Phase 2 Step 3 (delivery receipts) has NOT started.**
 - Development happens **incrementally, one step at a time** — never implement
   multiple steps without explicit user approval.
 
@@ -34,7 +35,7 @@
 ## Read these before doing anything
 
 1. `docs/ARCHITECTURE.md` — full architecture, database schema, business logic.
-2. `docs/DECISIONS.md` — binding decisions D1–D35. Supersede, never silently
+2. `docs/DECISIONS.md` — binding decisions D1–D36. Supersede, never silently
    change. (Renumbered during the Phase 0 revision — cite current text.)
 3. `docs/PROJECT_STATUS.md` — roadmap + the ordered Phase 1 checklist with
    per-step status.
@@ -273,6 +274,51 @@
   - `backend/tests/test_schedules.py` — 36 tests (engine math with pinned
     clock, inclusive boundary, exceptions, RBAC, validation, audit).
   - Totals: 128 backend + 5 Node unit + 28 browser = 161 checks passing.
+- **Phase 2 Step 2** (uncommitted at time of writing — commit after user review):
+  - `app/models/ordering.py` — `PurchaseOrder` + `PurchaseOrderItem`;
+    migration `0003_purchase_orders.py`. Statuses: draft, ordered, confirmed,
+    partially_delivered, delivered, delayed, cancelled. Item checks:
+    ordered > 0, received ≥ 0, received ≤ ordered (D36 — Step 3 receipts
+    cannot over-receive); one line per ingredient per order (unique).
+  - `app/services/ordering.py` — create/update (draft-only), idempotent
+    status transitions (`mark_ordered`, `confirm`, `delay`, `cancel`),
+    `incoming_by_ingredient(db)` — SQL GROUP BY over pending =
+    ordered − received per item, buckets ordered vs confirmed, earliest
+    expected date, worst-case status. Item ingredients must be ACTIVE and
+    linked to the supplier via the junction.
+  - Routes `app/api/v1/routes/orders.py`: list (status csv filter,
+    supplier_id, limit), create, detail, PATCH (draft only), mark-ordered /
+    confirm / delay (staff+admin), cancel (ADMIN only). CSRF + audit.
+  - `GET /inventory/stock` rows gained incoming fields per D36:
+    `incoming_quantity` (+ ordered/confirmed split), `expected_delivery`,
+    `incoming_status`, `projected_quantity`. Drafts/cancelled NEVER count.
+  - Supplier archive guard now also blocks on open purchase orders (409
+    `archive_blocked`). `test_reassign_then_archive_then_reactivate` was
+    updated to cancel Tokyo's demo orders before archiving — this is the
+    intended new rule, not a workaround.
+  - `app/seed.py` — `seed_demo_orders()` with its OWN marker
+    (`demo_orders_seeded`): Tokyo ORDERED (Korean Noodles 100 + Soup Base
+    20), Masumoto CONFIRMED (Chashu 200 + Eggs 120), Dragon DRAFT (Chinese
+    Noodles 50 — proves drafts never count).
+  - Frontend: new `js/pages/orders.js` (`SM.pages.orders`, route `#/orders`)
+    — list + status filter, detail modal with per-status action buttons,
+    create/edit modal (ingredients limited to the supplier's junction links).
+    Inventory page gained Incoming / Expected Arrival / Projected columns
+    (`SM.data.incomingInfo`); dashboard gained an Upcoming Deliveries card
+    (open orders only, links to `#/orders`).
+  - **Gotchas:**
+    - Decimal scale: `Decimal("0")` serializes as `"0"`, not `"0.000"` —
+      use the `ZERO = Decimal("0.000")` constant / matching defaults when
+      filling empty incoming buckets, or exact-string tests break.
+    - `openDetail` pushes action buttons AFTER `ui.modal()` is created
+      (the modal only renders actions present at call time), so the page
+      appends its own `.button-row` to the body. Follow that pattern.
+    - Pages are objects with `async render(view)`; `SM.ui.el` uses `class`
+      (not `className`), `onclick` handlers, and varargs children (arrays
+      ARE flattened, unlike raw `.append`).
+  - `backend/tests/test_orders.py` — 21 tests (CRUD, transitions,
+    idempotency, incoming aggregation, RBAC, archive guard, validation).
+  - Totals: 149 backend + 5 Node unit + 32 browser = 186 checks passing.
 
 ## Suggested review areas for the next agent (OpenAI Codex)
 
@@ -302,15 +348,18 @@
 
 ## Pending decisions (waiting on user)
 
-- Approval to commit Phase 2 Step 1 (supplier delivery scheduling).
-- Approval to start Phase 2 Step 2 (purchase orders, delivery confirmation).
+- Approval to commit Phase 2 Step 2 (purchase orders + incoming stock).
+- Approval to start Phase 2 Step 3 (delivery receipt confirmation).
 
 ## Recommended next task
 
-**Phase 2 Step 2** per `docs/ARCHITECTURE.md`: purchase orders (statuses
-draft → ordered → confirmed → partially delivered → delivered → delayed →
-cancelled), order placement tracking, delivery receipts. The opportunities
-engine already exposes `rule_id`/cutoffs to link orders against.
+**Phase 2 Step 3** per `docs/ARCHITECTURE.md`: delivery receipt confirmation —
+record actual received quantities per order item (partial deliveries
+supported), write the confirmed amount to the inventory ledger via the
+existing ledger service, idempotent receipt processing, audit history. The
+data model is ready: `quantity_received` per item (CHECK received ≤
+ordered), statuses `partially_delivered`/`delivered` already exist, and
+`incoming_by_ingredient()` automatically shrinks as receipts land.
 
 ## Git
 
@@ -322,6 +371,7 @@ engine already exposes `rule_id`/cutoffs to link orders against.
 - `d57b34f` — "Add supplier and ingredient administration APIs" (Step 5).
 - `c1fa23e` — "Add responsive frontend dashboard and stock entry UI" (Step 6).
 - `a67d07e` — "Add browser integration tests and fix UI rendering bugs" (Step 7).
-- Phase 2 Step 1 files are uncommitted, awaiting the user's commit approval.
-- Suggested message: "Add supplier delivery scheduling and instructions".
+- `2a34b14` — "Add supplier delivery scheduling and instructions" (Phase 2 Step 1).
+- Phase 2 Step 2 files are uncommitted, awaiting the user's commit approval.
+- Suggested message: "Add purchase orders and incoming stock indicators".
 - **Do not push or merge without explicit user approval.**

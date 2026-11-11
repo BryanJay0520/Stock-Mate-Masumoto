@@ -9,6 +9,8 @@ SM.pages.dashboard = {
     const ui = SM.ui;
     const { rows, ingredients, suppliers } = await SM.data.catalog();
     const transactions = await SM.api.get("/inventory/transactions?limit=8");
+    const deliveries = await SM.api.get(
+      "/purchase-orders?status=ordered,confirmed,delayed,partially_delivered&limit=10");
 
     const activeRows = rows.filter((r) => r.status === "active");
     const attention = activeRows.filter((r) => {
@@ -32,6 +34,38 @@ SM.pages.dashboard = {
       ui.el("a", { class: "btn", href: "#/entry", text: "Record Stock" }),
       ui.el("a", { class: "btn btn--secondary", href: "#/inventory", text: "View Inventory" }),
     ));
+
+    // Upcoming deliveries — ordered but not yet received (Phase 2 Step 2).
+    const deliveriesCard = ui.el("div", { class: "card" },
+      ui.el("h2", { class: "card__title", text: "Upcoming Deliveries" }));
+    if (deliveries.length === 0) {
+      deliveriesCard.append(ui.empty("No pending deliveries."));
+    } else {
+      const table = ui.el("table", { class: "table table--responsive" },
+        ui.el("thead", {}, ui.el("tr", {},
+          ui.el("th", { text: "Supplier" }),
+          ui.el("th", { text: "Order" }),
+          ui.el("th", { text: "Expected" }),
+          ui.el("th", { text: "Items" }),
+          ui.el("th", { text: "Status" }),
+        )),
+      );
+      const tbody = ui.el("tbody");
+      for (const order of deliveries) {
+        tbody.append(ui.el("tr", {},
+          ui.el("td", { "data-label": "Supplier", text: order.supplier_name || "—" }),
+          ui.el("td", { "data-label": "Order", text: `#${order.id}` }),
+          ui.el("td", { "data-label": "Expected", text: ui.formatDateOnly(order.expected_delivery_date) }),
+          ui.el("td", { "data-label": "Items", text: `${order.items.length} item${order.items.length === 1 ? "" : "s"}` }),
+          ui.el("td", { "data-label": "Status" }, SM.pages.orders.statusBadge(order.status)),
+        ));
+      }
+      table.append(tbody);
+      deliveriesCard.append(ui.el("div", { class: "table-wrap" }, table));
+      deliveriesCard.append(ui.el("p", {},
+        ui.el("a", { href: "#/orders", text: "View all purchase orders →" })));
+    }
+    view.append(deliveriesCard);
 
     // Items needing attention
     const attentionCard = ui.el("div", { class: "card" },

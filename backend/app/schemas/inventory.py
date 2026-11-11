@@ -12,8 +12,8 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_serializer
 
 
-def _ser_decimal(value: Decimal) -> str:
-    return str(value)
+def _ser_decimal(value: Decimal | None) -> str | None:
+    return None if value is None else str(value)
 
 
 class StockEntryRequest(BaseModel):
@@ -69,8 +69,20 @@ class StockOut(BaseModel):
     last_counted_by: int | None
     last_transaction_at: datetime | None
     confidence: str
+    # Pending supply from purchase orders (D36) — server-computed, never
+    # part of the physical balance. ``projected_quantity`` is an estimate
+    # (available + incoming), always distinct from ``current_quantity``.
+    incoming_quantity: Decimal = Decimal("0")
+    incoming_ordered_quantity: Decimal = Decimal("0")
+    incoming_confirmed_quantity: Decimal = Decimal("0")
+    expected_delivery: date | None = None
+    incoming_status: str | None = None
+    projected_quantity: Decimal | None = None
 
-    _decimals = field_serializer("current_quantity")(_ser_decimal)
+    _decimals = field_serializer(
+        "current_quantity", "incoming_quantity", "incoming_ordered_quantity",
+        "incoming_confirmed_quantity", "projected_quantity",
+    )(_ser_decimal)
 
 
 class LedgerCheckRow(BaseModel):
