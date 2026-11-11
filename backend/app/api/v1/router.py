@@ -9,6 +9,7 @@ from app.api.v1.routes import (
     ingredients,
     inventory,
     orders,
+    receiving,
     schedules,
     suppliers,
     units,
@@ -23,4 +24,5 @@ api_router.include_router(suppliers.router, tags=["suppliers"])
 api_router.include_router(ingredients.router, tags=["ingredients"])
 api_router.include_router(schedules.router, tags=["schedules"])
 api_router.include_router(orders.router, tags=["orders"])
+api_router.include_router(receiving.router, tags=["receiving"])
 api_router.include_router(units.router, tags=["units"])

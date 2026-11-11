@@ -23,15 +23,66 @@
   engine with real tz-aware dates and statuses (D33), supplier general
   instructions, scheduling UI in the Supplier Management page. Also fixed a
   genuine router race (torn render on overlapping navigations).
-- **Step 2 (purchase orders + incoming stock): ✅ COMPLETE, awaiting approval
-  to commit** — purchase orders with line items (statuses draft → ordered →
+- **Step 2 (purchase orders + incoming stock): ✅ COMPLETE** (commit
+  `f08e48b`) — purchase orders with line items (statuses draft → ordered →
   confirmed → partially delivered / delayed → delivered, cancelled),
   staff create/advance orders, admin-only cancel; incoming-stock indicators
   on Inventory (Available vs Incoming vs clearly-labeled Projected, D36) and
   an Upcoming Deliveries card on the dashboard; drafts/cancelled never count
   as incoming; physical stock untouched until Step 3 receipts; supplier
   archive blocked while open orders exist; migration `0003_purchase_orders`.
-  **149 backend + 5 Node unit + 32/32 real browser tests passing.**
+- **Step 3 (delivery receiving): ✅ COMPLETE, approved for commit** —
+  receipt confirmation per order line (partial deliveries, over-receive
+  rejection), atomic ledger integration (`delivery_receipt` rows linked 1:1
+  to receipt lines), damaged/rejected quantities tracked separately (never
+  stocked, never fulfill the obligation), receipt-level idempotency,
+  admin-only reversal receipts, order status derived from received
+  quantities only (D37), confidence untouched by receipts; Receive Delivery
+  UI with confirm dialog + receipt history in the order detail; migrations
+  `0004_delivery_receipts` + `0005_receipt_rejected_qty` +
+  `0006_receipt_staff_name`. See the current verification below; earlier
+  Kimi totals were superseded during reconciliation.
+
+### Codex Step 3 reconciliation (2026-11-12)
+
+- Preserved the existing uncommitted receiving models, service, routes,
+  frontend, migrations 0004/0005/0006, and tests. Branch `main`, HEAD
+  `f08e48b`; no commit, push, deployment, or later-phase work.
+- Both earlier reports were incomplete: migration 0005 and rejected quantity
+  handling existed, as did migration 0006 and four staff-name tests. The
+  initial backend run passed 173 tests.
+- Fixed idempotency comparison of staff names/notes on receipts and reversals,
+  retries across a business-day boundary, total arrived quantity validation,
+  and reversal form retry keys. History now shows UTC-aware receipt timestamps,
+  accepted/rejected quantities (including zero), historical outstanding,
+  receipt status, notes, self-reported names, and the separate account actor.
+- Received By rejects missing/empty/whitespace names, trims valid names,
+  persists each partial receiver separately, and preserves both names when
+  reversed. Historical records without a staff name display "Not recorded".
+- Rejected goods never enter stock or fulfill the order; accepted plus
+  rejected in a single arrival cannot exceed the current outstanding amount.
+  Original receipt and reversal history remain append-only through the API.
+- Development schema and repository head are `0006_receipt_staff_name`.
+  Before applying 0006, backed up SQLite to
+  `/tmp/stockmate-before-0006-jylspag4/stockmate.db` in WSL. All existing rows
+  in 16 application tables remained unchanged, with valid foreign keys.
+  Tests used isolated temporary databases; development data was never reseeded.
+- Chrome: **35/35 passed**, including whitespace-name rejection, accepted vs
+  rejected stock effects, history, over-receive protection, and 390px receipt
+  history. Artifacts: Windows temp `stockmate-browser-uwNZeR`.
+- Node: **5/5 passed**. Both changed JS files pass `node --check`;
+  `git diff --check` is clean. Final full WSL backend suite:
+  **180 passed, 1 warning in 201.42s**. Includes migration/model drift,
+  populated legacy upgrades, concurrent distinct-key and same-key receipts,
+  atomic rollback, ledger/cache agreement, reversal and staff-name regressions.
+- Frontend skill static audit exited 1 for two actionless-button findings in
+  unchanged `frontend/index.html` (menu/logout). Both have `addEventListener`
+  handlers in `frontend/js/app.js:23-27`; these are static-analysis false
+  positives. Report: WSL `/tmp/stockmate-ui-audit.json`.
+- Limitations: identities are self-reported; legacy names cannot be recovered.
+  PostgreSQL concurrency and broader production readiness remain unverified;
+  this review covers the existing SQLite application. Pytest emits an existing
+  Starlette/httpx deprecation warning.
 
 Phase 0 was approved with three final requirements, now reflected in the docs:
 D15 (SQLite-safe concurrency: `BEGIN IMMEDIATE` + atomic conditional UPDATE +
@@ -46,7 +97,7 @@ junction row; service validates supplier `active` status).
 |-------|-------|--------|
 | 0 | Planning, architecture, docs (incl. review revision) | ✅ Done (commit `e53898d`) |
 | 1 | Inventory MVP: DB, auth, ingredients, **basic supplier CRUD + assignment**, dual stock entry, ledger, dashboard, confidence timestamps | 🔶 Steps 1–7 of 8 done |
-| 2 | Supplier schedule rules, delivery calendars, cutoff engine, purchase orders, delivery confirmation, supplier reminders (engine part), alternative-supplier ordering | 🔶 Step 1 (scheduling, `2a34b14`) done; Step 2 (purchase orders + incoming stock) done, awaiting commit approval |
+| 2 | Supplier schedule rules, delivery calendars, cutoff engine, purchase orders, delivery confirmation, supplier reminders (engine part), alternative-supplier ordering | 🔶 Steps 1–2 done (`2a34b14`, `f08e48b`); Step 3 (delivery receiving) done, awaiting commit approval |
 | 3 | Demand forecasting, forecast calendar, status colors, order suggestions, confidence indicators | ⬜ Not started |
 | 4 | Scheduled reminders, in-app notifications, preferences, provider routing | ⬜ Not started |
 | 5 | Analytics, reports, CSV export, simple statistics | ⬜ Not started |

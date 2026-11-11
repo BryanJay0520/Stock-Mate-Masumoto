@@ -7,11 +7,11 @@
 
 - **Current phase:** Phase 2 — Supplier Scheduling & Ordering.
 - **Progress:** Phase 1 complete (through `a67d07e`). Phase 2 Step 1
-  (supplier delivery scheduling) committed as `2a34b14`. Phase 2 Step 2
-  (purchase orders + incoming stock indicators) is **implemented and fully
-  tested — 149 backend + 5 Node unit + 32/32 real browser tests passing**,
-  uncommitted at time of writing. **Awaiting user approval to commit;
-  Phase 2 Step 3 (delivery receipts) has NOT started.**
+  (`2a34b14`) and Step 2 (`f08e48b`) committed. Phase 2 Step 3 (delivery
+  receiving & stock integration) is **implemented; Codex reconciliation
+  and verification are recorded in PROJECT_STATUS.md**.
+  Commit approved on 2026-11-12; the next step (forecasting, Phase 3)
+  has NOT started.
 - Development happens **incrementally, one step at a time** — never implement
   multiple steps without explicit user approval.
 
@@ -35,7 +35,7 @@
 ## Read these before doing anything
 
 1. `docs/ARCHITECTURE.md` — full architecture, database schema, business logic.
-2. `docs/DECISIONS.md` — binding decisions D1–D36. Supersede, never silently
+2. `docs/DECISIONS.md` — binding decisions D1–D37. Supersede, never silently
    change. (Renumbered during the Phase 0 revision — cite current text.)
 3. `docs/PROJECT_STATUS.md` — roadmap + the ordered Phase 1 checklist with
    per-step status.
@@ -319,6 +319,65 @@
   - `backend/tests/test_orders.py` — 21 tests (CRUD, transitions,
     idempotency, incoming aggregation, RBAC, archive guard, validation).
   - Totals: 149 backend + 5 Node unit + 32 browser = 186 checks passing.
+- **Phase 2 Step 3** (approved for commit on 2026-11-12):
+  - `app/models/receiving.py` — `DeliveryReceipt` (order FK, received_by,
+    received_at, receipt_date, notes, unique idempotency key,
+    `reversal_of_id` self-FK) + `DeliveryReceiptItem` (1:1 link to the
+    ledger transaction it created; quantity positive on receipts, negative
+    on reversals; `quantity_rejected` records damaged goods — never
+    stocked, never fulfills). Migrations `0004_delivery_receipts.py` and
+    `0005_receipt_rejected_qty.py` (additive column + widened nonzero check
+    via batch_alter_table; 0004 untouched for already-migrated DBs).
+  - `app/services/receiving.py` — `receive_delivery()` / `reverse_receipt()`.
+    One atomic transaction per receipt: per line a `delivery_receipt`
+    ledger row + cached-balance update (`counted_by=None` — confidence
+    untouched) + `quantity_received` increment + receipt rows. Order status
+    is recomputed from quantities only (D37): complete → delivered, some →
+    partially_delivered, zero → ordered. Receivable only from ordered/
+    confirmed/delayed/partially_delivered; over-receive → 409.
+    Admin-only `reverse_receipt()`: appends a negative reversal receipt
+    (original preserved; ledger rows supersede the original stock-in rows),
+    refused if stock would go negative (409 `insufficient_stock`) — then an
+    admin stock correction is the right tool.
+  - Routes `app/api/v1/routes/receiving.py`:
+    `POST /purchase-orders/{id}/receive` (staff+admin, 201),
+    `GET /purchase-orders/{id}/receipts`,
+    `POST /receipts/{id}/reverse` (admin only). CSRF + audit on mutations.
+  - Frontend `js/pages/orders.js` — order detail gained "Receive Delivery"
+    (receivable statuses only), a per-line receiving form (untouched lines
+    = nothing received; confirm dialog before posting; idempotency key via
+    `SM.pages.entry.newKey()`), and an immutable receipt history with
+    admin-only Reverse buttons.
+  - **Gotchas:**
+    - New models with a plain `created_at` column must set it explicitly in
+      the service (no TimestampMixin on DeliveryReceipt).
+    - Receipt items must be appended to `receipt.items` (relationship), not
+      just `db.add(...)` with a FK — otherwise the in-transaction audit
+      snapshot serializes an empty item list.
+    - Concurrency tests must log in their clients BEFORE starting threads:
+      login writes a session row and contends with BEGIN IMMEDIATE.
+    - Browser suite: never delete/reseed the SQLite file under a RUNNING
+      server — stop uvicorn, reseed, restart (deleted inode vs new file).
+  - `backend/tests/test_receiving.py` — 20 tests (full/partial/multiple
+    receipts, over-receive, replay + conflict, concurrent race, draft/
+    cancelled/delivered rejection, damaged/rejected quantities, multi-line
+    atomic rollback, confidence untouched, ledger↔cache consistency, audit,
+    reversal lifecycle, RBAC, CSRF).
+  - Historical Kimi report: 169 backend + 5 Node unit + 35 browser.
+    The working tree also contained migration `0006_receipt_staff_name` and
+    four staff-name tests; the initial Codex backend run passed 173 tests.
+    See the Codex reconciliation in `PROJECT_STATUS.md` for current results.
+  - Codex preserved all existing migrations and receiving implementation.
+    Added strict metadata replay checks, retries across business-day changes,
+    arrived-total bounds, UTC timestamps, historical outstanding quantities,
+    explicit Posted/Reversed/Reversal UI states, and repaired browser requests
+    to supply the mandatory self-reported staff name. Reversal forms retain
+    their idempotency key on retry. Removed vacuous duplicate name assertions.
+  - Development database upgraded from 0005 to 0006 after backup at
+    `/tmp/stockmate-before-0006-jylspag4/stockmate.db` (WSL).
+    Existing rows in all 16 application tables were compared unchanged;
+    `PRAGMA foreign_key_check` returned no violations. No reset or reseed.
+    Legacy unknown staff names remain empty and display "Not recorded".
 
 ## Suggested review areas for the next agent (OpenAI Codex)
 
@@ -348,18 +407,14 @@
 
 ## Pending decisions (waiting on user)
 
-- Approval to commit Phase 2 Step 2 (purchase orders + incoming stock).
-- Approval to start Phase 2 Step 3 (delivery receipt confirmation).
+- Approval to start the next phase (Phase 3: demand forecasting) or any
+  remaining Phase 2 items (reminder engine part).
 
 ## Recommended next task
 
-**Phase 2 Step 3** per `docs/ARCHITECTURE.md`: delivery receipt confirmation —
-record actual received quantities per order item (partial deliveries
-supported), write the confirmed amount to the inventory ledger via the
-existing ledger service, idempotent receipt processing, audit history. The
-data model is ready: `quantity_received` per item (CHECK received ≤
-ordered), statuses `partially_delivered`/`delivered` already exist, and
-`incoming_by_ingredient()` automatically shrinks as receipts land.
+**Phase 3 (forecasting)** or the remaining Phase 2 reminder engine, per the
+user's roadmap. The ordering loop is complete end-to-end: schedules →
+orders → incoming stock → receipts → ledger.
 
 ## Git
 
@@ -372,6 +427,7 @@ ordered), statuses `partially_delivered`/`delivered` already exist, and
 - `c1fa23e` — "Add responsive frontend dashboard and stock entry UI" (Step 6).
 - `a67d07e` — "Add browser integration tests and fix UI rendering bugs" (Step 7).
 - `2a34b14` — "Add supplier delivery scheduling and instructions" (Phase 2 Step 1).
-- Phase 2 Step 2 files are uncommitted, awaiting the user's commit approval.
-- Suggested message: "Add purchase orders and incoming stock indicators".
+- `f08e48b` — "Add purchase orders and incoming stock indicators" (Phase 2 Step 2).
+- Phase 2 Step 3 commit approved on 2026-11-12 with message
+  "Add delivery receiving with ledger integration".
 - **Do not push or merge without explicit user approval.**

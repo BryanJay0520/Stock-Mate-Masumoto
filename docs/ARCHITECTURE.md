@@ -213,9 +213,22 @@ if the supplier is later archived),
 **purchase_order_items** (Phase 2) — `id`, `order_id` FK, `ingredient_id` FK,
 `quantity_ordered`, `quantity_received` (default 0).
 
-**delivery_receipts** (Phase 2) — `id`, `order_id` FK, `confirmed_by` FK,
-`confirmed_at`, `idempotency_key` (unique) — a double-submit never double-adds
-stock. Linked ledger rows of type `delivery_receipt` carry the actual increase.
+**delivery_receipts** (Phase 2, D37) — `id`, `purchase_order_id` FK,
+`received_by` FK (authenticated account), `received_by_staff_name` (required,
+self-reported employee name), `received_at` (UTC), `receipt_date` (business
+date), `notes`, unique `idempotency_key`, `reversal_of_id` self-FK, `created_at`.
+Legacy receipts migrated from before staff-name collection retain an empty
+name; the UI labels it "Not recorded" rather than inventing an employee.
+
+**delivery_receipt_items** — receipt/order-item/ingredient FKs, `quantity`
+(accepted), `quantity_rejected`, nullable unique `inventory_transaction_id`.
+Only accepted quantities increase stock and fulfill orders; rejected goods
+remain outstanding. Fully rejected lines create no stock ledger entry.
+Reversals append negative accepted/rejected quantities and compensating ledger
+rows. History derives outstanding after each receipt from immutable accepted
+quantities in receipt-ID order; later receipts never rewrite earlier history.
+Migrations: `0004_delivery_receipts` → `0005_receipt_rejected_qty` →
+`0006_receipt_staff_name`.
 
 **supplier_schedule_rules** (Phase 2) — repeatable weekly rules, multiple rows
 per supplier (optionally per ingredient):

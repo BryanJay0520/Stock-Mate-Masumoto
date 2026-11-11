@@ -579,6 +579,150 @@ async function orderTests() {
   });
 }
 
+async function receivingTests() {
+  const overlay = `[...document.querySelectorAll(".modal-overlay")].pop()`;
+
+  await test("partial receipt posts stock, keeps outstanding, updates order", async () => {
+    await navigate("/orders");
+    await waitFor(`document.querySelector("#view").textContent.includes("Masumoto Provisions")`);
+    const before = (await apiAsSession("/inventory/stock"))
+      .find((r) => r.ingredient_name === "Chashu");
+    // Open the Masumoto confirmed order.
+    await evaluate(`(() => {
+      const row = [...document.querySelectorAll("#view tbody tr")]
+        .find(r => r.textContent.includes("Masumoto Provisions") && r.textContent.includes("Confirmed"));
+      [...row.querySelectorAll("button")].find(b => b.textContent === "View").click();
+    })()`);
+    await waitFor(`(() => {
+      const o = ${overlay};
+      return o && [...o.querySelectorAll("button")].some(b => b.textContent === "Receive Delivery");
+    })()`);
+    await evaluate(`(() => {
+      [...${overlay}.querySelectorAll("button")].find(b => b.textContent === "Receive Delivery").click();
+    })()`);
+    await waitFor(`document.getElementById("receipt-date")`);
+    await evaluate(`(() => {
+      document.getElementById("receipt-staff-name").value = "   ";
+      document.querySelector('input[aria-label="Received quantity for Chashu"]').value = "50";
+      [...${overlay}.querySelectorAll("button")].find(b => b.textContent === "Confirm Receipt").click();
+    })()`);
+    await waitFor(`${overlay}.textContent.includes("Received By (Staff Name) is required.")`);
+    await evaluate(`(() => {
+      const overlay = ${overlay};
+      const input = overlay.querySelector('input[aria-label="Received quantity for Chashu"]');
+      input.value = "50";
+      input.dispatchEvent(new Event("input", {bubbles: true}));
+      const rejected = overlay.querySelector('input[aria-label="Rejected quantity for Chashu"]');
+      rejected.value = "2";
+      rejected.dispatchEvent(new Event("input", {bubbles: true}));
+      document.getElementById("receipt-notes").value = "Browser test partial delivery";
+      document.getElementById("receipt-staff-name").value = "Kenji Browser";
+      [...overlay.querySelectorAll("button")].find(b => b.textContent === "Confirm Receipt").click();
+    })()`);
+    // The safety confirmation dialog must appear and be confirmed.
+    await waitFor(`(() => {
+      const o = ${overlay};
+      return o && o.textContent.includes("Post received stock?");
+    })()`);
+    await evaluate(`(() => {
+      [...${overlay}.querySelectorAll("button")].find(b => b.textContent === "Confirm Receipt").click();
+    })()`);
+    await waitFor(`document.getElementById("toasts").textContent.includes("Delivery received")`);
+
+    const after = (await apiAsSession("/inventory/stock"))
+      .find((r) => r.ingredient_name === "Chashu");
+    // Only the ACCEPTED 50 entered stock; the 2 rejected did not.
+    assert(parseFloat(after.current_quantity) === parseFloat(before.current_quantity) + 50,
+      `Chashu ${before.current_quantity} -> ${after.current_quantity}`);
+    assert(after.incoming_quantity === "150.000", `outstanding incoming ${after.incoming_quantity}`);
+    // Confidence is NOT refreshed by a receipt.
+    assert(after.last_counted_at === before.last_counted_at, "receipt refreshed count confidence");
+
+    // The rejected quantity is visible in the receipt record.
+    const order = (await apiAsSession("/purchase-orders?status=partially_delivered"))[0];
+    const receipts = await apiAsSession(`/purchase-orders/${order.id}/receipts`);
+    assert(receipts[0].items[0].quantity_rejected === "2.000",
+      `rejected qty not recorded: ${JSON.stringify(receipts[0].items[0])}`);
+
+    await waitFor(`document.querySelector("#view").textContent.includes("Partially Delivered")`);
+    await screenshot("order-partially-delivered");
+  });
+
+  await test("receipt history is shown with the responsible user", async () => {
+    await evaluate(`(() => {
+      const row = [...document.querySelectorAll("#view tbody tr")]
+        .find(r => r.textContent.includes("Masumoto Provisions") && r.textContent.includes("Partially Delivered"));
+      [...row.querySelectorAll("button")].find(b => b.textContent === "View").click();
+    })()`);
+    await waitFor(`(() => {
+      const o = ${overlay};
+      return o && o.textContent.includes("Delivery Receipts") && o.textContent.includes("Chashu: 50");
+    })()`);
+    await assertText(".modal-overlay", "Browser test partial delivery");
+    await assertText(".modal-overlay", "Received By (self-reported): Kenji Browser");
+    await assertText(".modal-overlay", "2 rejected");
+    await assertText(".modal-overlay", "150 outstanding after this receipt");
+    await assertText(".modal-overlay", "Posted");
+    await setViewport(390);
+    assert(await evaluate(`document.documentElement.scrollWidth <= window.innerWidth + 1`),
+      "receipt history overflows on mobile");
+    await screenshot("receipt-history-390");
+    await setViewport(1440);
+    await evaluate(`${overlay}.remove()`);
+  });
+
+  await test("over-receiving through the form is blocked server-side", async () => {
+    await evaluate(`(() => {
+      const row = [...document.querySelectorAll("#view tbody tr")]
+        .find(r => r.textContent.includes("Masumoto Provisions") && r.textContent.includes("Partially Delivered"));
+      [...row.querySelectorAll("button")].find(b => b.textContent === "View").click();
+    })()`);
+    await waitFor(`(() => {
+      const o = ${overlay};
+      return o && [...o.querySelectorAll("button")].some(b => b.textContent === "Receive Delivery");
+    })()`);
+    await evaluate(`(() => {
+      [...${overlay}.querySelectorAll("button")].find(b => b.textContent === "Receive Delivery").click();
+    })()`);
+    await waitFor(`document.getElementById("receipt-date")`);
+    // The client pre-validates: 999 exceeds the 150 outstanding.
+    await evaluate(`(() => {
+      const overlay = ${overlay};
+      const input = overlay.querySelector('input[aria-label="Received quantity for Chashu"]');
+      input.value = "999";
+      document.getElementById("receipt-staff-name").value = "Kenji Browser";
+      input.dispatchEvent(new Event("input", {bubbles: true}));
+      [...overlay.querySelectorAll("button")].find(b => b.textContent === "Confirm Receipt").click();
+    })()`);
+    await waitFor(`(() => {
+      const o = ${overlay};
+      return o && o.querySelector(".alert--error") !== null;
+    })()`);
+    const errorText = await evaluate(`(() => {
+      const o = ${overlay};
+      const alert = o ? o.querySelector(".alert--error") : null;
+      return alert ? alert.textContent : "";
+    })()`);
+    assert(errorText.includes("outstanding"), `expected outstanding error, got: ${errorText}`);
+    // And the API itself enforces the same rule.
+    const order = (await apiAsSession("/purchase-orders?status=partially_delivered"))[0];
+    const rejected = await evaluate(`(() => {
+      const raw = document.cookie.split("; ").find(c => c.startsWith("stockmate_csrf=")).split("=")[1];
+      return fetch("${BASE}/api/v1/purchase-orders/${order.id}/receive", {
+        method: "POST", credentials: "same-origin",
+        headers: {"Content-Type": "application/json", "X-CSRF-Token": decodeURIComponent(raw)},
+        body: JSON.stringify({
+          lines: [{ingredient_id: ${order.items[0].ingredient_id}, quantity: 999}],
+          idempotency_key: "browser-over-receive",
+          received_by_staff_name: "Kenji Browser",
+        }),
+      }).then(r => r.status);
+    })()`);
+    assert(rejected === 409, `expected 409 over_receive, got ${rejected}`);
+    await evaluate(`${overlay}.remove()`);
+  });
+}
+
 async function ingredientTests() {
   await test("admin can create an ingredient with an opening balance", async () => {
     await navigate("/ingredients");
@@ -758,6 +902,7 @@ try {
   await supplierTests();
   await scheduleTests();
   await orderTests();
+  await receivingTests();
   await ingredientTests();
   await correctionTests();
   await responsiveTests();

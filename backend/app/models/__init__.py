@@ -9,6 +9,7 @@ from app.models.audit import AuditLog
 from app.models.ingredient import Ingredient, IngredientStockState
 from app.models.inventory import InventoryTransaction
 from app.models.ordering import PurchaseOrder, PurchaseOrderItem
+from app.models.receiving import DeliveryReceipt, DeliveryReceiptItem
 from app.models.scheduling import SupplierCalendarException, SupplierScheduleRule
 from app.models.settings import AppSetting
 from app.models.session import UserSession
@@ -23,6 +24,8 @@ __all__ = [
     "Ingredient",
     "IngredientStockState",
     "InventoryTransaction",
+    "DeliveryReceipt",
+    "DeliveryReceiptItem",
     "PurchaseOrder",
     "PurchaseOrderItem",
     "Supplier",

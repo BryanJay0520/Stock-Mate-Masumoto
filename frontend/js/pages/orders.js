@@ -26,6 +26,8 @@ SM.pages.orders = {
     cancelled: "neutral",
   },
 
+  RECEIVABLE_STATUSES: ["ordered", "confirmed", "delayed", "partially_delivered"],
+
   statusBadge(status) {
     return SM.ui.badge(this.STATUS_LABELS[status] || status, this.STATUS_KINDS[status] || "neutral");
   },
@@ -142,6 +144,52 @@ SM.pages.orders = {
     table.append(tbody);
     body.append(ui.el("div", { class: "table-wrap" }, table), errorArea);
 
+    // Receipt history (immutable; reversals are separate receipts).
+    const receiptsWrap = ui.el("div");
+    body.append(receiptsWrap);
+    const loadReceipts = async () => {
+      ui.clear(receiptsWrap);
+      let receipts;
+      try {
+        receipts = await SM.api.get(`/purchase-orders/${order.id}/receipts`);
+      } catch (error) {
+        receiptsWrap.append(ui.alert(error.message));
+        return;
+      }
+      if (!receipts.length) {
+        receiptsWrap.append(ui.el("p", { class: "text-muted text-small", text: "No deliveries received yet." }));
+        return;
+      }
+      receiptsWrap.append(ui.el("h3", { text: "Delivery Receipts" }));
+      for (const receipt of receipts) {
+        const lines = receipt.items
+          .map((i) => `${i.ingredient_name || "#" + i.ingredient_id}: ${ui.formatQty(i.quantity)} accepted`
+            + `, ${ui.formatQty(i.quantity_rejected)} rejected`
+            + `, ${ui.formatQty(i.outstanding_quantity)} outstanding after this receipt`)
+          .join(" · ");
+        const actions = [];
+        if (isAdmin && !receipt.is_reversal && !receipt.reversed_by_id) {
+          actions.push(ui.el("button", {
+            class: "btn btn--danger btn--small", text: "Reverse",
+            onclick: () => this.reverseReceipt(receipt, order.id, () => {
+              reload();
+              close();
+            }),
+          }));
+        }
+        receiptsWrap.append(ui.el("div", { class: "card" },
+          ui.el("p", {},
+            ui.el("strong", { text: `Receipt #${receipt.id}` }), " ",
+            receipt.is_reversal ? ui.badge("Reversal", "critical") : null,
+            !receipt.is_reversal && !receipt.reversed_by_id ? ui.badge("Posted", "safe") : null,
+            receipt.reversed_by_id ? [" ", ui.badge("Reversed", "neutral")] : null),
+          ui.el("p", { class: "text-small", text: `${ui.formatDateTime(receipt.received_at)} · business date ${ui.formatDateOnly(receipt.receipt_date)} · Received By (self-reported): ${receipt.received_by_staff_name || "Not recorded"} (account: ${receipt.received_by_name || "—"}) · ${lines}` }),
+          receipt.notes ? ui.el("p", { class: "text-small text-muted", text: receipt.notes }) : null,
+          actions.length ? ui.el("div", { class: "button-row" }, actions) : null,
+        ));
+      }
+    };
+
     const actions = [];
     const close = ui.modal({
       title: `Purchase Order #${order.id}`, body, actions, wide: true,
@@ -176,6 +224,12 @@ SM.pages.orders = {
     } else if (order.status === "delayed") {
       act("confirm", "Confirm Order");
     }
+    if (this.RECEIVABLE_STATUSES.includes(order.status)) {
+      actions.unshift(ui.el("button", {
+        class: "btn", text: "Receive Delivery",
+        onclick: () => { close(); this.openReceiveForm(order, reload); },
+      }));
+    }
     if (isAdmin && ["draft", "ordered", "confirmed", "delayed"].includes(order.status)) {
       actions.push(ui.el("button", {
         class: "btn btn--danger", text: "Cancel Order",
@@ -203,6 +257,201 @@ SM.pages.orders = {
     if (actions.length) {
       body.append(ui.el("div", { class: "button-row" }, actions));
     }
+    loadReceipts();
+  },
+
+  // --- Receiving (Phase 2 Step 3) ---------------------------------------------
+
+  openReceiveForm(order, reload) {
+    const ui = SM.ui;
+    const errorArea = ui.el("div");
+    const outstandingItems = order.items.filter(
+      (item) => ui.toMillis(item.pending_quantity) > 0
+    );
+    if (!outstandingItems.length) {
+      ui.toast("Nothing outstanding on this order.", "error");
+      return;
+    }
+
+    const qtyInputs = new Map();
+    const rejectedInputs = new Map();
+    const rows = outstandingItems.map((item) => {
+      const qtyInput = ui.el("input", {
+        class: "input", type: "number", min: "0", step: "0.001",
+        value: "", placeholder: "0",
+        "aria-label": `Received quantity for ${item.ingredient_name}`,
+      });
+      const rejectedInput = ui.el("input", {
+        class: "input", type: "number", min: "0", step: "0.001",
+        value: "", placeholder: "0",
+        "aria-label": `Rejected quantity for ${item.ingredient_name}`,
+      });
+      qtyInputs.set(item.ingredient_id, qtyInput);
+      rejectedInputs.set(item.ingredient_id, rejectedInput);
+      return ui.el("tr", {},
+        ui.el("td", { "data-label": "Ingredient", text: item.ingredient_name || `#${item.ingredient_id}` }),
+        ui.el("td", { "data-label": "Ordered", text: ui.formatQty(item.quantity_ordered) }),
+        ui.el("td", { "data-label": "Received", text: ui.formatQty(item.quantity_received) }),
+        ui.el("td", { "data-label": "Outstanding" },
+          ui.el("strong", { text: ui.formatQty(item.pending_quantity) })),
+        ui.el("td", { "data-label": "Receiving Now" }, qtyInput),
+        ui.el("td", { "data-label": "Damaged / Rejected" }, rejectedInput),
+      );
+    });
+    const today = new Date();
+    const pad = (n) => String(n).padStart(2, "0");
+    const dateInput = ui.el("input", {
+      class: "input", type: "date", id: "receipt-date",
+      value: `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`,
+    });
+    const notesInput = ui.el("input", {
+      class: "input", type: "text", id: "receipt-notes", maxlength: "500",
+      placeholder: "Discrepancies, damaged goods, … (optional)",
+    });
+    const staffNameInput = ui.el("input", {
+      class: "input", type: "text", id: "receipt-staff-name", maxlength: "120",
+      required: true, placeholder: "Name of the employee who received the goods",
+    });
+
+    const submitButton = ui.el("button", {
+      class: "btn", type: "submit", text: "Confirm Receipt",
+    });
+    const idempotencyKey = SM.pages.entry.newKey();
+    const form = ui.el("form", {
+      onsubmit: async (event) => {
+        event.preventDefault();
+        ui.clear(errorArea);
+        const lines = [];
+        for (const item of outstandingItems) {
+          const rawQty = qtyInputs.get(item.ingredient_id).value.trim();
+          const rawRejected = rejectedInputs.get(item.ingredient_id).value.trim();
+          if (rawQty === "" && rawRejected === "") continue; // untouched line
+          const qty = rawQty === "" ? 0 : Number(rawQty);
+          const rejected = rawRejected === "" ? 0 : Number(rawRejected);
+          if (!(qty >= 0) || !(rejected >= 0) || (qty === 0 && rejected === 0)) {
+            errorArea.append(ui.alert(`Line for ${item.ingredient_name} needs an accepted or a rejected quantity (no negatives).`));
+            return;
+          }
+          if (ui.toMillis(item.pending_quantity) !== null
+              && (qty + rejected) * 1000 > ui.toMillis(item.pending_quantity)) {
+            errorArea.append(ui.alert(`Cannot receive ${qty} of ${item.ingredient_name} — only ${ui.formatQty(item.pending_quantity)} outstanding.`));
+            return;
+          }
+          lines.push({
+            ingredient_id: item.ingredient_id,
+            quantity: qty,
+            quantity_rejected: rejected,
+          });
+        }
+        if (!lines.length) {
+          errorArea.append(ui.alert("Enter at least one received or rejected quantity."));
+          return;
+        }
+        const staffName = staffNameInput.value.trim();
+        if (!staffName) {
+          errorArea.append(ui.alert("Received By (Staff Name) is required."));
+          return;
+        }
+        const summary = lines.map((line) => {
+          const item = outstandingItems.find((i) => i.ingredient_id === line.ingredient_id);
+          return `${item.ingredient_name}: ${line.quantity} accepted`
+            + (line.quantity_rejected ? `, ${line.quantity_rejected} rejected` : "");
+        }).join("; ");
+        const approved = await ui.confirmDialog({
+          title: "Post received stock?",
+          message: `This adds ${summary} to physical inventory, received by ${staffName}, and cannot be edited afterwards. Mistakes require an admin reversal.`,
+          confirmLabel: "Confirm Receipt",
+        });
+        if (!approved) return;
+        ui.setBusy(submitButton, true, "Posting…");
+        try {
+          await SM.api.post(`/purchase-orders/${order.id}/receive`, {
+            lines,
+            receipt_date: dateInput.value || null,
+            notes: notesInput.value.trim() || null,
+            idempotency_key: idempotencyKey,
+            received_by_staff_name: staffName,
+          });
+          close();
+          ui.toast(`Delivery received for order #${order.id}.`);
+          reload();
+        } catch (error) {
+          errorArea.append(ui.alert(error.message));
+        } finally {
+          ui.setBusy(submitButton, false);
+        }
+      },
+    });
+
+    form.append(
+      ui.el("p", { class: "text-muted text-small" },
+        `Order #${order.id} · ${order.supplier_name || ""} · expected ${ui.formatDateOnly(order.expected_delivery_date)}. `
+        + "Enter only what physically arrived — never the full order by default."),
+      ui.el("div", { class: "table-wrap" },
+        ui.el("table", { class: "table table--responsive" },
+          ui.el("thead", {}, ui.el("tr", {},
+            ...["Ingredient", "Ordered", "Received", "Outstanding", "Receiving Now", "Damaged / Rejected"]
+              .map((h) => ui.el("th", { text: h })))),
+          ui.el("tbody", {}, rows))),
+      ui.el("div", { class: "field" },
+        ui.el("label", { class: "field__label", for: "receipt-date", text: "Actual Receipt Date" }),
+        dateInput),
+      ui.el("div", { class: "field" },
+        ui.el("label", { class: "field__label", for: "receipt-staff-name", text: "Received By (Staff Name) *" }),
+        staffNameInput),
+      ui.el("div", { class: "field" },
+        ui.el("label", { class: "field__label", for: "receipt-notes", text: "Notes" }),
+        notesInput),
+      errorArea,
+      ui.el("div", { class: "button-row" }, submitButton),
+    );
+
+    const close = ui.modal({
+      title: `Receive Delivery — Order #${order.id}`, body: form, wide: true,
+    });
+  },
+
+  reverseReceipt(receipt, orderId, done) {
+    const ui = SM.ui;
+    const errorArea = ui.el("div");
+    const nameInput = ui.el("input", {
+      class: "input", type: "text", id: "reverse-staff-name", maxlength: "120",
+      required: true, placeholder: "Your name (who authorizes this reversal)",
+    });
+    const confirmBtn = ui.el("button", { class: "btn btn--danger", text: "Reverse Receipt" });
+    const body = ui.el("div", {},
+      ui.el("p", { text: `Reverse receipt #${receipt.id}? The received quantities are removed from physical stock and become outstanding again. The original receipt is preserved — a reversal receipt is appended. Fails if the stock was already consumed.` }),
+      ui.el("div", { class: "field" },
+        ui.el("label", { class: "field__label", for: "reverse-staff-name", text: "Reversed By (Staff Name) *" }),
+        nameInput),
+      errorArea,
+    );
+    const close = ui.modal({
+      title: "Reverse Receipt", body, actions: [confirmBtn],
+    });
+    const idempotencyKey = SM.pages.entry.newKey();
+    confirmBtn.addEventListener("click", async () => {
+      ui.clear(errorArea);
+      const staffName = nameInput.value.trim();
+      if (!staffName) {
+        errorArea.append(ui.alert("Reversed By (Staff Name) is required."));
+        return;
+      }
+      ui.setBusy(confirmBtn, true, "Reversing…");
+      try {
+        await SM.api.post(`/receipts/${receipt.id}/reverse`, {
+          idempotency_key: idempotencyKey,
+          received_by_staff_name: staffName,
+        });
+        close();
+        ui.toast(`Receipt #${receipt.id} reversed.`);
+        done();
+      } catch (error) {
+        errorArea.append(ui.alert(error.message));
+      } finally {
+        ui.setBusy(confirmBtn, false);
+      }
+    });
   },
 
   async openForm(existing, reload) {

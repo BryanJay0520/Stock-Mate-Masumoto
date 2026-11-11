@@ -304,3 +304,43 @@ ledger service; (4) `quantity_received ≤ quantity_ordered` is enforced by a
 database CHECK so Step 3 receipts cannot over-receive silently; (5) supplier
 archiving is blocked (409 `archive_blocked`) while open purchase orders
 exist — open = any status except `delivered`/`cancelled`.
+
+## D37 — Receipts are the only path from "ordered" to "in stock"; reversals are receipts too
+
+Physical stock increases from a purchase order ONLY through confirmed
+delivery receipts. One atomic transaction per receipt writes, for every
+line: the immutable `delivery_receipt` ledger row, the cached balance
+update, the order item's `quantity_received` increment, and the
+`delivery_receipts`/`delivery_receipt_items` rows (each line links 1:1 to
+its ledger transaction). Rules:
+
+- Receivable statuses: `ordered`, `confirmed`, `delayed`,
+  `partially_delivered`. Draft/cancelled/delivered are rejected (409
+  `not_receivable`); over-receiving is rejected (409 `over_receive`) and
+  also DB-enforced (`quantity_received ≤ quantity_ordered`).
+- `partially_delivered` and `delivered` are derived ONLY from received
+  quantities inside the receipt flow — no generic status endpoint may set
+  them. A reversal that removes all received goods returns the order to
+  `ordered` (always factual: receiving requires a placed order).
+- Receipts are immutable. Mistakes are undone by an admin-only reversal
+  receipt (`reversal_of_id`) with negative item quantities and compensating
+  ledger rows (`supersedes_id` points at the original stock-in row). A
+  reversal cannot drive stock negative — if the goods were consumed, the
+  reversal is refused (409 `insufficient_stock`) and a stock correction is
+  the right tool instead.
+- Receipt-level idempotency keys guard the whole receipt (D6); a replayed
+  key with a different payload is a 409 conflict (D28).
+  Staff name and notes are part of that comparison, including on reversals.
+  A retry with an omitted receipt date reuses the original business date,
+  including across midnight.
+- Damaged/refused goods are recorded per line as `quantity_rejected`:
+  never stocked, never reduce the outstanding obligation, and mirrored
+  negatively on reversals. A fully-rejected line (accepted 0) is valid and
+  posts no ledger row.
+- Receiving is NOT a physical count: `counted_by=None`, so
+  `last_counted_at`/confidence are untouched (D3).
+- Every new receipt and reversal requires a nonblank, trimmed, self-reported
+  employee name; the authenticated account FK and audit actor remain separate.
+- Accepted plus rejected quantities in one arriving line cannot exceed its
+  current outstanding quantity. Rejected replacements may arrive later;
+  rejection itself never discharges the supplier obligation.
