@@ -81,3 +81,24 @@ and link to the full ingredient selector. This is a deterministic planning batch
 not an unbounded history table. Existing document scrolling and table-to-card
 behavior own narrow layouts. Both roles may inspect recommendations, and all
 existing write permissions remain enforced by their owning APIs.
+
+The Notification Center uses explicit evaluation. `Refresh tasks` is a
+CSRF-protected POST; opening the bell, dashboard, or full page only reads the
+last persisted snapshot. The last evaluation time is always visible; older
+than one hour is labeled stale and the dashboard withholds its task list until
+refresh. The bell displays the unread count and four recent titles. Its
+disclosure is keyboard accessible, and the page works at 390px without horizontal
+overflow. Read, acknowledge and business resolution have different labels and
+effects. A shared login shares read/ack state, which the page says plainly.
+
+`All`, `Unread`, `Urgent`, and `Resolved / history` are route-backed filters.
+All includes active and historical notices; the bell and dashboard show active
+work only. History isolates resolved, expired, and superseded notices.
+The API provides deterministic priority/task/time ordering and ten-item page links;
+filter changes start at the first page. Cards use text for priority and type,
+show business/action timestamps, link to the relevant existing workflow, and
+expose Mark as read and Acknowledge separately. Mark all as read affects only
+active notices. Empty states are specific to each filter. Network failures
+clear stale content and leave a retry path. Admin-only Settings controls
+category flags, count time and count ingredient applicability; a save never
+silently evaluates conditions or contacts a supplier.

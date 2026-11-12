@@ -113,6 +113,10 @@ An order placed at exactly the cutoff instant counts as on time
 
 ## D17 — APScheduler 3.x, single process
 
+Deferred after Phase 4 Step 1. The implemented notification evaluator has no
+startup or background job. Future scheduler work must reuse that evaluator and
+define catch-up/delivery semantics before enabling any automatic dispatch.
+
 Pin `apscheduler>=3.10,<4` with a SQLAlchemy job store. The scheduler runs
 inside the single FastAPI process for MVP (`coalesce=True`, `max_instances=1`,
 `misfire_grace_time` set). Startup catch-up dispatches overdue pending events;
@@ -556,3 +560,57 @@ with pending-order verification. Raw 135 rounds to three boxes / 180 pieces.
 Earlier stock 30 versus demand 80 warns of shortage 50 and suppresses definitive
 ordering. A cancelled Monday extends Friday coverage through Tuesday when
 Wednesday is the next valid opportunity. All examples run only in isolated tests.
+
+## D43 — Explicit, persistent in-app notification evaluation
+
+Phase 4 Step 1 adds migration `0009_notification_center`, six notification
+types, account-level read/ack state, category enable flags, and opt-in daily
+count applicability. No ingredient is forced into daily counting by default.
+The reminder defaults to 21:30 in the configured business timezone; a time
+before a non-midnight business boundary belongs to the following civil date.
+Only physical `remaining` reconciliations for that business date satisfy a
+count. Used entries and delivery receipts do not.
+
+`POST /notifications/evaluate` is authenticated and CSRF-protected for staff
+and admins; settings writes require admin. GETs and application startup are
+read-only. Evaluation uses D41/D42 forecast and recommendation snapshots,
+D32–D35 scheduling opportunities, and accepted receipt quantities. It writes
+only notification tables. Contact reminders are independent of PO placement.
+There is no background scheduler, external dispatch, or automatic supplier
+action in this step.
+
+One daily event is keyed by business date; one ordering event by supplier and
+delivery date (D20); required contact by supplier, date, method and deadline;
+pending delivery by order and original expected date; verification by
+ingredient, order and expected date; shortage by ingredient and earliest risk
+date. `condition_key` is stable while a condition persists. Database-unique
+`dedupe_key` prevents duplicates; if a resolved condition reappears, a new
+episode suffix creates a distinct historical record. A SQLite write-intent
+transaction and bounded retry handle concurrent evaluators. Future workers
+must retry the whole transaction on a uniqueness/lock race and must use one
+evaluator rather than recomputing independently.
+
+Read and acknowledgement timestamps are separate per authenticated user;
+shared account users share both. Neither proves the business action or changes
+event status. Business state alone resolves a condition, while missed
+deadlines expire and replaced cycles supersede. Unknown inputs preserve an
+unresolved prior alert rather than claiming success. `resolved_at` is set
+only for actual resolution; `closed_at` records any inactive transition.
+The All filter includes active and historical notices; the bell and dashboard
+query active notices only. History filters inactive notices.
+Material changes to an active notice reset read/ack states so instructions
+are noticed again. Source names, amounts and actions are snapshot text; archive
+does not erase history. Internal targets are constructed server-side, never
+accepted as user-supplied URLs.
+The existing guarded fictional demo reset clears notification account states,
+events and count applicability before removing related demo orders and catalog
+rows, while preserving the notification preference row and authentication. It
+still requires the exact verified local database, current migration head and
+explicit confirmation; it is never an application-startup action.
+
+Urgency thresholds are explicit: shortage within two days critical; order
+cutoff within 24 hours high; required contact within 12 hours high; delivery
+two days overdue or flagged delayed high. Other notices are normal. Contact
+reminders begin 24 hours before the required deadline. The UI labels an
+evaluation older than one hour as a stale snapshot. These thresholds can
+become administrator settings later if restaurant workflow requires it.

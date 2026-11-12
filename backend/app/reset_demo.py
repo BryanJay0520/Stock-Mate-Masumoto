@@ -28,7 +28,8 @@ from app.database import create_db_engine, create_session_factory
 from app.models import (
     AppSetting, AuditLog, DeliveryReceipt, DeliveryReceiptItem, Ingredient, IngredientDemandSetting,
     IngredientStockState, InventoryTransaction, PurchaseOrder,
-    PurchaseOrderItem, Supplier, SupplierCalendarException,
+    PurchaseOrderItem, NotificationCountRule, NotificationEvent, NotificationUserState,
+    Supplier, SupplierCalendarException,
     SupplierIngredient, SupplierScheduleRule, User,
 )
 from app.seed import (
@@ -119,6 +120,11 @@ def backup_database(source: Path) -> Path:
 
 def remove_demo_operations(session: Session) -> None:
     """Delete dependent demo rows in FK order without touching auth or schema."""
+    # Notices reference demo ingredients, suppliers and orders. Preserve the
+    # administrator's notification_settings but clear ingredient applicability.
+    session.execute(delete(NotificationUserState))
+    session.execute(delete(NotificationEvent))
+    session.execute(delete(NotificationCountRule))
     session.execute(delete(DeliveryReceiptItem))
     session.execute(delete(DeliveryReceipt))
     session.execute(delete(PurchaseOrderItem))

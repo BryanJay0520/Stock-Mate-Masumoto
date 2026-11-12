@@ -5,7 +5,7 @@
 
 ## Where the project is
 
-- **Current phase:** Phase 3 Step 3 — smart order recommendations and supplier deadline planning.
+- **Current phase:** Phase 4 Step 1 — explicit smart notifications and in-app center, implemented and verified.
 - **Progress:** Phase 1 complete (through `a67d07e`). Phase 2 Step 1
   (`2a34b14`) and Step 2 (`f08e48b`) committed. Phase 2 Step 3 (delivery
   receiving & stock integration) is **implemented; Codex reconciliation
@@ -15,8 +15,10 @@
   `PROJECT_STATUS.md` and committed as `dd67047`. Step 1 demand configuration
   is committed as `a49d61a`. Step 2 read-only forecasting and its calendar are
   committed as `85d5994` (verified HEAD and origin/main before Step 3).
-  Step 3 advisory planning is implemented and uncommitted; automatic ordering
-  and Phase 4 have NOT started.
+  Step 3 advisory planning was committed as `2504cf8` with message
+  `Add smart order recommendations and supplier deadline planning`.
+  Phase 4 Step 1 has commit approval. Automatic
+  ordering, background notifications and external delivery have not started.
   The demo database has
   Korean Noodles in `pc` with 60 pieces per Box and 180 pieces opening stock.
 - Phase 3 Step 1 verification: 214 backend, 8 frontend, and 45 real-browser
@@ -52,8 +54,23 @@
   selector keyboard audit `stockmate-browser-OmRP15`. DESIGN lint has zero
   errors/four existing unused-token warnings; static audit still reports only
   the two known external-handler menu/logout false positives. See the exact
-  file inventory and policies in PROJECT_STATUS.md. Stop for user review;
-  no commit, push, deployment or Phase 4 work is authorized.
+  file inventory and policies in PROJECT_STATUS.md. Phase 3 Step 3 is committed;
+  these are historical verification numbers.
+- Phase 4 Step 1 adds migration `0009_notification_center` and six persistent
+  notice categories. Only explicit authenticated, CSRF-protected POST evaluation
+  writes notices. GETs, app startup, inventory and POs remain untouched.
+  Admin settings opt ingredients into daily physical-count reminders and enable
+  categories. `read_at` and `acknowledged_at` are per account and never resolve
+  business conditions; a shared login shares both. D43 and PROJECT_STATUS.md
+  describe identities, transitions and future scheduler boundaries. Final
+  verification: 352 backend passed (one existing TestClient deprecation
+  warning), 26 focused notification/reset tests passed, 19 frontend unit
+  tests passed, and 67/67 real Chrome integration tests passed.
+  The verified local development DB was backed up to
+  `backend/backups/stockmate-before-notifications-20261112T173839415256Z.db`
+  and migrated from 0008 to 0009. Its 17 application tables match the backup
+  row-for-row; only Alembic's version changed and four empty notification
+  tables were added. No reset or reseed occurred.
 - Development happens **incrementally, one step at a time** — never implement
   multiple steps without explicit user approval.
 
@@ -449,21 +466,16 @@
 
 ## Pending decisions (waiting on user)
 
-- Approval to commit Phase 3 Step 3 after review, then separate approval for
-  later phases. Do not automatically commit, push, deploy, or start Phase 4.
+- Phase 4 Step 2 requires separate approval. Do not automatically push, deploy,
+  or start Phase 4 Step 2.
 
 ## Recommended next task
 
-Review Step 3's results and assumptions in PROJECT_STATUS.md and D40/D41/D42. Forecast
-reads validate ledger/cache consistency, reuse D39 daily demand, never write
-stock/orders, and expose excluded supply separately. Missing consumption poisons
-downstream balances rather than inventing zero. No historical as-of query or
-persisted usage override is supported. Today's separate preview defaults to the
-configured full-day upper bound, permits a temporary zero override, and feeds
-tomorrow. Red pre-delivery risk is independent of closing availability. Partial
-remainders need matching confirmation audits for conservative eligibility.
-Planning remains advisory and time-phased, with no order creation or supplier
-contact. Migration head stays 0008. Stop for review; Phase 4 is not authorized.
+Review Phase 4 Step 1's implementation and verification in PROJECT_STATUS.md,
+D43 and UX-CONTRACT.md. The explicit evaluator is the only notification write
+path; future background jobs must reuse it and supply a clock/catch-up policy.
+Migration head is `0009_notification_center`. Keep the development database
+untouched. Do not start background delivery or Phase 4 Step 2 without approval.
 
 ## Git
 
@@ -479,4 +491,6 @@ contact. Migration head stays 0008. Stop for review; Phase 4 is not authorized.
 - `f08e48b` — "Add purchase orders and incoming stock indicators" (Phase 2 Step 2).
 - Phase 2 Step 3 commit approved on 2026-11-12 with message
   "Add delivery receiving with ledger integration".
+- `2504cf8` — "Add smart order recommendations and supplier deadline planning"
+  (Phase 3 Step 3).
 - **Do not push or merge without explicit user approval.**

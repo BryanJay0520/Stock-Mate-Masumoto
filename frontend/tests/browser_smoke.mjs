@@ -1160,6 +1160,20 @@ function SMQuantity(value) {
 async function plannerTests() {
   let korean, beforeStock, beforeHistory, beforeOrders, beforeDemand;
   await test("order planner explains supplier-specific coverage and pending-order safeguards", async () => {
+    // Build the intended pending-order scenario from today's real schedule.
+    // The browser suite can run on any weekday; a longer gap to the next
+    // delivery otherwise creates a genuine earlier shortage and correctly
+    // suppresses numeric advice before this UI case is exercised.
+    const current = (await apiAsSession("/inventory/stock")).find(row => row.ingredient_name === "Korean Noodles");
+    const advice = (await apiAsSession(`/recommendations?ingredient_id=${current.ingredient_id}`)).recommendations[0];
+    const calc = advice.conservative;
+    const delta = Math.max(Number(calc.shortage_before_delivery) + 1,
+      Number(calc.target_stock) - Number(calc.projected_before_delivery) - 100);
+    const baseline = Number(current.current_quantity) + Math.max(delta, 0);
+    await evaluate(`SM.api.post("/inventory/entries", {
+      ingredient_id: ${current.ingredient_id}, mode: "remaining", quantity: ${JSON.stringify(String(baseline))},
+      reason: "daily_count", idempotency_key: "browser-planner-baseline", confirmed: true
+    })`);
     beforeStock = await apiAsSession("/inventory/stock");
     beforeHistory = await apiAsSession("/inventory/transactions?limit=200");
     beforeOrders = await apiAsSession("/purchase-orders?limit=200");
@@ -1295,6 +1309,78 @@ async function correctionTests() {
   });
 }
 
+async function notificationTests() {
+  let dailyNoticeId;
+  await test("admin configures daily reminders with explicit ingredient applicability", async () => {
+    await navigate("/settings");
+    await waitFor(`document.getElementById("notification-daily-time")`);
+    await evaluate(`(() => {
+      document.getElementById("notification-daily-time").value = "00:00";
+      for (const label of document.querySelectorAll(".notification-count-scope .notification-check"))
+        label.querySelector("input").checked = label.textContent.includes("Chinese Noodles");
+      document.querySelector(".notification-settings-grid input").checked = true;
+      document.querySelector(".notification-settings-grid").closest("form").querySelector("button[type=submit]").click();
+    })()`);
+    await waitFor(`document.querySelector("#view").textContent.includes("Notification settings saved")`);
+    const settings = await apiAsSession("/notifications/settings");
+    const chinese = (await apiAsSession("/ingredients")).find(i => i.name === "Chinese Noodles");
+    assert(settings.daily_count_time.startsWith("00:00") && settings.daily_count_ingredient_ids.includes(chinese.id), "count scope or time was not saved");
+  });
+  await test("explicit refresh creates an aggregated notification and the bell shows unread", async () => {
+    const beforeStock = await apiAsSession("/inventory/stock");
+    const beforeOrders = await apiAsSession("/purchase-orders?limit=200");
+    await navigate("/notifications");
+    await waitFor(`document.querySelector("#view").textContent.includes("Notification Center")`);
+    await assertText("#view", "not been evaluated yet");
+    await evaluate(`[...document.querySelectorAll("#view button")].find(b=>b.textContent==="Refresh tasks").click()`);
+    await waitFor(`document.querySelector("#view").textContent.includes("Last evaluated")`);
+    const notices = (await apiAsSession("/notifications?limit=100")).items;
+    const dailyIndex = notices.findIndex(i => i.type === "daily_count" && i.message.includes("Chinese Noodles"));
+    assert(dailyIndex >= 0, "explicit evaluation did not create the configured count reminder");
+    dailyNoticeId = notices[dailyIndex].id;
+    await navigate(`/notifications?offset=${Math.floor(dailyIndex / 10) * 10}`);
+    await waitFor(`document.querySelector(".notification-card")?.textContent.includes("Chinese Noodles") ||
+      [...document.querySelectorAll(".notification-card")].some(c=>c.textContent.includes("Chinese Noodles"))`);
+    await assertText("#view", "Complete today's inventory counts");
+    assert(Number(await evaluate(`document.getElementById("notification-count").textContent`)) >= 1, "bell did not show unread notices");
+    await evaluate(`document.getElementById("notification-bell").open=true`);
+    await waitFor(`document.getElementById("notification-recent").textContent.includes("notifications")`);
+    await screenshot("notifications-desktop");
+    assert(JSON.stringify(await apiAsSession("/inventory/stock")) === JSON.stringify(beforeStock), "evaluation changed stock");
+    assert(JSON.stringify(await apiAsSession("/purchase-orders?limit=200")) === JSON.stringify(beforeOrders), "evaluation changed orders");
+  });
+  await test("mark read and acknowledge keep the business condition active", async () => {
+    await evaluate(`document.getElementById("notification-bell").open=false`);
+    assert(dailyNoticeId, "no daily count notice");
+    await evaluate(`[...document.querySelectorAll(".notification-card")].find(c=>c.textContent.includes("Complete today's inventory counts"))
+      .querySelector("button").click()`);
+    await waitFor(`[...document.querySelectorAll(".notification-card")].find(c=>c.textContent.includes("Complete today's inventory counts"))?.textContent.includes("Read")`);
+    await evaluate(`[...document.querySelectorAll(".notification-card")].find(c=>c.textContent.includes("Complete today's inventory counts"))
+      .querySelector("button[title]").click()`);
+    await waitFor(`[...document.querySelectorAll(".notification-card")].find(c=>c.textContent.includes("Complete today's inventory counts"))?.textContent.includes("Acknowledged")`);
+    const after = (await apiAsSession("/notifications?limit=100")).items.find(i => i.id === dailyNoticeId);
+    assert(after.status === "active" && after.read_at && after.acknowledged_at, "read/ack resolved the task");
+    await evaluate(`[...document.querySelectorAll("#view button")].find(b=>b.textContent==="Mark all as read").click()`);
+    await waitFor(`document.getElementById("notification-count").textContent==="0"`);
+  });
+  await test("notification filters dashboard summary and mobile layout are usable", async () => {
+    await navigate("/notifications?view=history");
+    await waitFor(`document.querySelector("#view").textContent.includes("No resolved or expired notices")`);
+    await navigate("/dashboard");
+    await waitFor(`document.querySelector("#view").textContent.includes("Notifications / Action Required")`);
+    await assertText("#view", "Last evaluated");
+    await setViewport(390);
+    await navigate("/notifications");
+    await waitFor(`document.querySelector("#view .notification-card")`);
+    assert(await evaluate(`document.documentElement.scrollWidth-window.innerWidth<=1`), "notification center overflows phone");
+    await screenshot("notifications-390");
+    await evaluate(`document.getElementById("notification-bell").open=true`);
+    assert(await evaluate(`document.documentElement.scrollWidth-window.innerWidth<=1`), "notification bell overflows phone");
+    await screenshot("notifications-bell-390");
+    await setViewport(1440);
+  });
+}
+
 async function staffOrderTests() {
   await test("staff sees purchase orders read-mostly, without cancel", async () => {
     // Already logged in as staff (staffScheduleTests ends on a staff session).
@@ -1414,6 +1500,18 @@ async function staffTests() {
     await evaluate(`document.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape"}))`);
   });
 
+  await test("staff can refresh and read notifications without changing admin settings", async () => {
+    await navigate("/notifications");
+    await waitFor(`document.querySelector("#view").textContent.includes("Notification Center")`);
+    assert(await evaluate(`Boolean([...document.querySelectorAll("#view button")].find(b=>b.textContent==="Refresh tasks"))`),
+      "staff cannot refresh operational notices");
+    await evaluate(`[...document.querySelectorAll("#view button")].find(b=>b.textContent==="Refresh tasks").click()`);
+    await waitFor(`document.querySelector("#view").textContent.includes("Last evaluated")`);
+    await navigate("/settings");
+    await waitFor(`document.querySelector("#view").textContent.includes("Your Account")`);
+    assert(!(await evaluate(`Boolean(document.getElementById("notification-daily-time"))`)), "staff can edit notification settings");
+  });
+
   await test("cleared session redirects protected pages to login", async () => {
     await openDemand();
     await send("Network.clearBrowserCookies");
@@ -1440,6 +1538,7 @@ try {
   await plannerTests();
   await ingredientTests();
   await correctionTests();
+  await notificationTests();
   await responsiveTests();
   await staffTests();
   await staffScheduleTests();

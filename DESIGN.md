@@ -83,6 +83,14 @@ or provisional purchasing units, then the dated cutoff/coverage facts. Keep
 urgent pre-delivery risk visible beside pending-order and count checks. Native
 disclosures hold calculation and order contributions; contacts remain plain,
 readable operational instructions. No new palette or dashboard theme is added.
+Notifications use a compact bell in the existing topbar, the existing cards
+and semantic badges, and a document-scrolling list. The bell opens a bounded
+recent list without moving the page. The full center exposes four labeled
+filters, action time, business date, read/ack states and clear internal links.
+On phones the filters wrap, cards stay in one column, and the topbar title
+uses the existing base text size to keep the bell and logout accessible.
+The dashboard shows a concise action summary with evaluation time. Stale
+snapshots carry text warnings instead of appearing as current instructions.
 
 ## Elevation & Depth
 
@@ -98,6 +106,9 @@ Canonical DOM, modal, alert, busy, and toast helpers live in `frontend/js/ui.js`
 Planning forms use the same inputs, buttons, and feedback as Ingredient
 Management. Preserve input and button geometry during save. Read-only settings
 show disabled fields and an explicit staff access explanation.
+Notification Settings reuse native checkboxes and time input in the existing
+administrator Settings page. The count applicability list names real active
+ingredients; no count schedule is implied by merely adding an ingredient.
 
 ## Do's and Don'ts
 

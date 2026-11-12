@@ -156,7 +156,8 @@ def _calculate(item, scenario, opportunity, following, link):
 
 
 def generate_recommendations(db: Session, *, settings: Settings, ingredient_id=None, now_utc=None,
-                             remaining_usage_overrides=None, override_business_date=None):
+                             remaining_usage_overrides=None, override_business_date=None,
+                             forecast_snapshot=None):
     now = as_utc(now_utc or _now())
     ingredients = db.scalars(select(Ingredient).where(Ingredient.status == "active").order_by(Ingredient.name)).all()
     ids = [row.id for row in ingredients]
@@ -165,7 +166,7 @@ def generate_recommendations(db: Session, *, settings: Settings, ingredient_id=N
     suppliers = {row.id: row for row in db.scalars(select(Supplier).where(Supplier.id.in_(supplier_ids)))}
     opportunities = {sid: compute_opportunities(db, supplier_id=sid, now_utc=now, horizon_days=SEARCH_DAYS,
                      business_tz=settings.business_timezone) for sid, supplier in suppliers.items() if supplier.status == "active"}
-    forecast = generate_forecast(db, settings=settings, days=SEARCH_DAYS, ingredient_id=ingredient_id,
+    forecast = forecast_snapshot or generate_forecast(db, settings=settings, days=SEARCH_DAYS, ingredient_id=ingredient_id,
         now_utc=now, remaining_usage_overrides=remaining_usage_overrides,
         override_business_date=override_business_date, opportunities_by_supplier=opportunities)
     catalog = {row.id: row for row in ingredients}

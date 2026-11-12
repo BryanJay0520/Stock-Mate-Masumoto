@@ -3,14 +3,15 @@
 Smart restaurant inventory management and supply planning system.
 Web-based, mobile-ready, designed initially for a ramen restaurant.
 
-🚧 **Work in Progress — Phase 3 Step 3 advisory order planning implemented**
+🚧 **Work in Progress — Phase 4 Step 1 in-app notifications implemented**
 
 The responsive web UI includes login, dashboard, inventory, package-aware
 daily stock entry, supplier and ingredient management, purchase orders and
 delivery receiving, transaction history with corrections, and account
 settings, editable ingredient demand estimates, and a read-only Forecast Calendar.
 Order Planner provides advisory purchasing quantities and supplier deadlines.
-Automatic ordering and notifications are outside this step.
+The in-app Notification Center stores explicitly evaluated tasks and risks.
+Automatic ordering, background evaluation and external messages are future work.
 
 ## What it does (planned)
 
@@ -19,8 +20,9 @@ Automatic ordering and notifications are outside this step.
 - Purchase orders with delivery confirmation (incoming vs. actual stock)
 - Demand forecasting and a 7/14/30-day stock forecast calendar (green/yellow/red/gray)
 - Stock Confidence Indicator (how trustworthy the current numbers are)
-- Scheduled reminders (daily stock count, order deadlines, deliveries, shortages)
-- Multi-channel notifications (in-app first; browser push, email, LINE later)
+- Explicit in-app reminders and alerts (daily counts, order deadlines, supplier
+  contact, forecast shortages, uncertain orders and deliveries)
+- Future scheduled evaluation and external delivery (browser push, email, LINE)
 - Role-based access: **Administrator** and **Staff**
 
 ## Counting full packages and loose stock
@@ -34,13 +36,13 @@ packages twice. The preview shows the converted total before submission.
 Remaining Stock reconciles the physical count, while Used Stock deducts the
 converted amount. Both use the same canonical inventory ledger and retain
 the original count breakdown in history. Supplier purchasing package sizes
-are configured separately through the admin API for future recommendations.
+are configured separately through the admin API and drive Order Planner advice.
 
 ## Tech stack
 
 - **Backend:** Python, FastAPI, SQLAlchemy, Pydantic, Alembic, SQLite (dev) → PostgreSQL (prod)
 - **Frontend:** HTML5, CSS3, vanilla JavaScript, responsive mobile-first (served by FastAPI)
-- **Scheduler:** APScheduler (in-process, DB-persisted jobs)
+- **Scheduler:** deferred; explicit notification evaluation is available now
 - **Tests:** pytest
 - **Mobile readiness:** versioned REST API (`/api/v1`), all business logic server-side; PWA and Capacitor packaging planned for later phases
 
@@ -137,6 +139,25 @@ node frontend/tests/browser_smoke.mjs
 
 Screenshots are saved to a temp directory whose path is printed at the end.
 
+## In-app notifications (Phase 4 Step 1)
+
+Open **Notifications** from the sidebar or the bell. Select **Refresh tasks**
+to explicitly evaluate current inventory, supplier and forecast conditions.
+Opening the page, bell or dashboard does not generate records; each shows the
+last evaluation time and warns when the snapshot is over an hour old. The full
+page has All, Unread, Urgent and Resolved/history filters, pagination, read and
+acknowledgement controls, and links to the existing workflows. Reading or
+acknowledging a notice does not complete its restaurant task. A shared login
+also shares read and acknowledgement state.
+
+Administrators configure category switches, daily count reminder time and the
+specific ingredients that require a daily physical count under **Settings /
+Account**. The default time is 21:30 in the configured business timezone;
+no ingredients are selected automatically. Used Stock entries and delivery
+receipts do not satisfy a physical-count reminder. Staff can see and refresh
+notifications but cannot change settings. This step sends no external messages
+and runs no background scheduler. Migration head is `0009_notification_center`.
+
 ## Ingredient forecast settings
 
 Open **Ingredients → Forecast Settings** for an ingredient. Administrators can
@@ -192,7 +213,8 @@ Count confidence is separate from availability and is capped by count age
 (24/72 hours by default). These read-only freshness thresholds use
 `STOCKMATE_COUNT_HIGH_FRESHNESS_HOURS` and `STOCKMATE_COUNT_MEDIUM_FRESHNESS_HOURS`.
 Forecast views do not change stock, write ledger entries, create purchase orders,
-or recommend purchase quantities. No migration beyond 0008 is needed.
+or recommend purchase quantities. Forecast Calendar itself uses migration 0008;
+the newer notification center adds migration 0009 independently.
 
 ## Order Planner
 

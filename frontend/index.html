@@ -26,6 +26,10 @@
                   aria-label="Open navigation menu">☰ Menu</button>
           <h1 class="topbar__title" id="page-title">StockMate</h1>
           <span class="topbar__user" id="topbar-user"></span>
+          <details class="notification-bell" id="notification-bell">
+            <summary aria-label="Notifications">🔔 <span id="notification-count" aria-label="0 unread notifications">0</span></summary>
+            <div class="notification-bell__panel" id="notification-recent"></div>
+          </details>
           <button class="btn btn--secondary btn--small" id="logout-button">Log out</button>
         </div>
         <div id="view" aria-live="polite"></div>
@@ -45,6 +49,7 @@
   <script src="/js/pages/dashboard.js"></script>
   <script src="/js/pages/forecast.js"></script>
   <script src="/js/pages/planner.js"></script>
+  <script src="/js/pages/notifications.js"></script>
   <script src="/js/pages/inventory.js"></script>
   <script src="/js/pages/entry.js"></script>
   <script src="/js/pages/suppliers.js"></script>

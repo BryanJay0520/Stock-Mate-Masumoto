@@ -10,6 +10,7 @@ SM.app = {
     inventory: { title: "Inventory", label: "Inventory" },
     forecast: { title: "Forecast Calendar", label: "Forecast Calendar" },
     planner: { title: "Order Planner", label: "Order Planner" },
+    notifications: { title: "Notifications", label: "Notifications" },
     entry: { title: "Daily Stock Entry", label: "Daily Stock Entry" },
     suppliers: { title: "Suppliers", label: "Suppliers" },
     orders: { title: "Purchase Orders", label: "Purchase Orders" },
@@ -84,6 +85,7 @@ SM.app = {
       `Signed in as ${user.username} (${roleLabel})`
     );
     document.getElementById("shell").classList.add("is-visible");
+    SM.notificationUI.refreshBell();
     this.shellReady = true;
   },
 
@@ -105,6 +107,7 @@ SM.app = {
       link.classList.toggle("is-active", link.dataset.route === routeKey);
     }
     this.closeSidebar();
+    document.getElementById("notification-bell").open = false;
 
     const view = SM.ui.clear(document.getElementById("view"));
     view.append(SM.ui.loading());

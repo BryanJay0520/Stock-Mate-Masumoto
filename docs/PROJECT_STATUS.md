@@ -2,7 +2,7 @@
 
 ## Current phase
 
-**Phase 3 Step 3 — Smart order recommendations and supplier deadline planning: complete, awaiting review**
+**Phase 4 Step 1 — Smart notification engine and in-app center: implemented and verified**
 
 - **Step 1 (skeleton): ✅ COMPLETE** (commit `a9de3bc`)
 - **Step 2 (database models + migrations + seed): ✅ COMPLETE** (commit `c9e72ae`)
@@ -285,7 +285,7 @@
   automatic ordering, package rounding, new POs, notifications, or Step 3 work.
   Subsequently committed as `85d5994`; Step 3 remains a separate change.
 
-### Phase 3 Step 3 — Advisory order planning (uncommitted)
+### Phase 3 Step 3 — Advisory order planning (committed as `2504cf8`)
 
 - Added authenticated, read-only `GET /recommendations` and an Order Planner
   page (D42). Reuses existing stock validation, demand estimates, current-day
@@ -369,16 +369,65 @@
   `frontend/tests/browser_smoke.mjs`.
 - Modified documentation: `README.md`, `DESIGN.md`, `UX-CONTRACT.md`,
   `docs/ARCHITECTURE.md`, `docs/DECISIONS.md`, `docs/PROJECT_STATUS.md`,
-  `docs/AGENT_HANDOFF.md`. Total **24 files: 18 modified, six new**, unstaged
-  and uncommitted at completion; no database, backup, environment or temporary
-  artifact belongs to the changeset.
+  `docs/AGENT_HANDOFF.md`. Total **24 files: 18 modified, six new** in commit
+  `2504cf8`; no database, backup, environment or temporary artifact was included.
 - Limitations: 30-day search; current snapshots only; unknown arrival times;
   conservative full-day remaining-usage default may overestimate after some
   usage is recorded. Early shortages and low/stale counts need manual review.
   Temporary overrides are not stored. Alternative stock is not guaranteed.
   No automatic order creation/submission, contact, notifications, supplier
   switching, split allocation, background reminders, commit, push, deployment,
-  or Phase 4 work.
+  or Phase 4 work at that step's completion.
+
+### Phase 4 Step 1 — Explicit in-app notifications
+
+- Migration `0009_notification_center` adds notification events, per-account
+  read/ack state, admin settings and opt-in ingredient count rules. It alters
+  no existing table or operational row. No ingredient is automatically subject
+  to a daily count. Default reminder time is 21:30 in the configured business
+  timezone; admins may change category flags, time and ingredient applicability.
+- Authenticated staff/admin `POST /notifications/evaluate` is the sole explicit
+  evaluation trigger. It uses CSRF, an injectable clock, a write-intent
+  transaction and bounded retries. GETs and app startup do not create notices.
+  Evaluation reuses scheduling, forecast, recommendations and accepted receipt
+  semantics and writes only notification tables. No external message, scheduler,
+  supplier contact, PO/receipt change or inventory ledger operation occurs.
+- Six notice types cover daily physical counts, supplier order cutoffs, required
+  contact, forecast shortage, uncertain order verification and pending/delayed
+  delivery. Daily count is one aggregate per business date, satisfied only by
+  `remaining` reconciliation. Supplier deadlines retain the rule's timezone,
+  actual reminder/cutoff, holiday exceptions and D42 additional quantities.
+  Pre-delivery risk and earlier shortage manual review remain visible; missing
+  inputs do not invent a purchase quantity. Rejected receipts leave the owed
+  quantity outstanding; delayed orders keep their dated expectation.
+- Database-unique event keys make repeated/concurrent evaluations idempotent.
+  New episodes receive a suffix after a resolved condition returns. Active
+  details update; material changes reset read/ack. Read, acknowledge and
+  actual resolution are separate. Expired/superseded history is retained.
+  A shared account shares its read state; separate accounts do not.
+- The navy/white UI adds a bell with unread count/recent items, a paginated
+  Notifications page (all/unread/urgent/history), explicit Refresh tasks,
+  mark read/all, acknowledgement, internal links, a dashboard summary with
+  evaluation timestamp, and admin-only settings. A snapshot older than one
+  hour is labeled stale. Desktop and 390px phone Chrome interactions passed.
+- Final verification on isolated databases: **352 backend passed** in 432.50s,
+  with one existing Starlette/httpx TestClient deprecation warning; **26 focused
+  notification/reset tests passed**; **19 frontend unit tests passed**; and
+  **67/67 real Chrome integration tests passed**. An initial Chrome run found an
+  existing date-sensitive planner fixture when run on Friday; the isolated
+  fixture now constructs its pending-order baseline from current schedule data.
+  The development database was not reset or reseeded; all browser work used a
+  disposable database. Final Chrome screenshots are in the Windows temp folder
+  `stockmate-browser-zrnm1e`.
+- The exact normal development target was verified as
+  `/mnt/c/Users/bryan/Projects/StockMate/backend/stockmate.db` in the
+  `development` environment. An online timestamped backup was created at
+  `backend/backups/stockmate-before-notifications-20261112T173839415256Z.db`
+  before applying schema-only `0009`. All 17 pre-existing application tables
+  match their backup row-for-row (the 18th, `alembic_version`, changed only from
+  0008 to 0009). Four empty notification tables were added; foreign keys,
+  ledger/cache reconciliation and SQLite quick check remain clean. The backup
+  and database are Git-ignored.
 
 Phase 0 was approved with three final requirements, now reflected in the docs:
 D15 (SQLite-safe concurrency: `BEGIN IMMEDIATE` + atomic conditional UPDATE +
@@ -394,8 +443,8 @@ junction row; service validates supplier `active` status).
 | 0 | Planning, architecture, docs (incl. review revision) | ✅ Done (commit `e53898d`) |
 | 1 | Inventory MVP: DB, auth, ingredients, **basic supplier CRUD + assignment**, dual stock entry, ledger, dashboard, confidence timestamps | 🔶 Steps 1–7 of 8 done |
 | 2 | Supplier schedule rules, delivery calendars, cutoff engine, purchase orders, delivery confirmation, supplier reminders (engine part), alternative-supplier ordering | 🔶 Steps 1–3 committed (`2a34b14`, `f08e48b`, `bfcb824`) |
-| 3 | Demand forecasting, forecast calendar, status colors, order suggestions, confidence indicators | 🔶 Steps 1–2 committed (`a49d61a`, `85d5994`); Step 3 implemented, uncommitted |
-| 4 | Scheduled reminders, in-app notifications, preferences, provider routing | ⬜ Not started |
+| 3 | Demand forecasting, forecast calendar, status colors, order suggestions, confidence indicators | ✅ Steps 1–3 committed (`a49d61a`, `85d5994`, `2504cf8`) |
+| 4 | Scheduled reminders, in-app notifications, preferences, provider routing | 🔶 Step 1 implemented; no scheduler or external delivery |
 | 5 | Analytics, reports, CSV export, simple statistics | ⬜ Not started |
 | 6 | Deployment readiness: security, regression, backups | ⬜ Not started |
 | — | PWA milestone (manifest, service worker) | ⬜ Future |

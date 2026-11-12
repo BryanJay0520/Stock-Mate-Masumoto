@@ -110,7 +110,10 @@ Endpoints (Phase 1 subset marked •):
 - `POST /api/v1/purchase-orders/{id}/confirm-delivery` (Phase 2)
 - `GET /api/v1/forecast/calendar?days=7&ingredient_id=…` (Phase 3)
 - `GET /api/v1/recommendations?ingredient_id=…` (Phase 3 Step 3, read-only order planning)
-- `GET /api/v1/notifications`, `POST /api/v1/notifications/{id}/acknowledge` (Phase 4)
+- `GET /api/v1/notifications` (paginated `all`/`unread`/`urgent`/`history`),
+  `GET /notifications/unread-count`, `POST /notifications/evaluate`,
+  `POST /notifications/{id}/read|acknowledge`, `POST /notifications/mark-all-read`,
+  `GET/PATCH /notifications/settings` (Phase 4 Step 1; paths under `/api/v1`)
 - `GET/PUT /api/v1/admin/settings` (Phase 4; minimal subset may appear earlier)
 
 ## 4. Database schema
@@ -172,9 +175,10 @@ authoritative transaction history:
 `before_json`, `after_json`, `created_at`. Written for admin-relevant changes
 (ingredient/supplier edits, settings, user management).
 
-**app_settings** — `key` PK, `value_json`. Holds: `business_timezone`
-(default `Asia/Tokyo`), `business_day_start_time` (default `00:00`, see §5.6),
-daily reminder time, large-adjustment threshold, notification config.
+**app_settings** — `key` PK, `value_json`; currently holds seed markers.
+Business timezone, day boundary and adjustment threshold come from runtime
+`Settings`; Phase 4 daily reminder and category flags live in
+`notification_settings` (§4.4).
 
 ### 4.2 Suppliers & ingredient assignment (Phase 1 CRUD, Phase 2 scheduling)
 
@@ -297,22 +301,33 @@ override that ingredient's weekday estimate. They are not implemented in Step 1.
 `high_freshness_hours` (default 24), `medium_freshness_hours` (default 72),
 `requires_daily_verification` bool. Per-ingredient, admin-tunable.
 
-### 4.4 Notifications (Phase 4)
+### 4.4 Notifications (Phase 4 Step 1, migration `0009`)
 
-**notification_events** — `id`, `type` (`daily_count_reminder`|`order_deadline`|
-`delivery_reminder`|`shortage_alert`|`confidence_warning`),
-`payload_json`, `scheduled_for` (UTC),
-`status` (`pending`|`sent`|`acknowledged`|`expired`|`resolved`),
-`dedupe_key` (unique), `acknowledged_by`/`acknowledged_at`.
+**notification_events** records six types: `daily_count`, `order_cutoff`,
+`supplier_contact`, `forecast_shortage`, `verify_pending_order`, and
+`pending_delivery`. Each has an explicit priority, current status
+(`active`/`resolved`/`expired`/`superseded`), title/message, plain structured
+snapshot, optional source FKs and delivery-cycle identity, business date, UTC
+action/creation/update/closed/resolved timestamps, and a safe internal route.
+`condition_key` identifies the business condition; unique `dedupe_key` is that
+key plus an episode suffix if a resolved condition genuinely reappears. Source
+records may be archived; snapshot text keeps old notices understandable.
 
-**notification_delivery_attempts** — `id`, `event_id` FK,
-`channel` (`in_app`|`browser_push`|`email`|`line`|`native_push`),
-`status` (`success`|`failed`), `attempted_at`, `error` (nullable).
-Delivery success is tracked separately from acknowledgement; we never claim a
-notification was "read" unless the channel supports it.
+**notification_user_states** has unique `(notification_id, user_id)` and separate
+`read_at` and `acknowledged_at`. Neither represents business completion. A shared
+operational login therefore shares its read/ack state; separate users remain
+independent. The one-business-scope database and existing RBAC remain intact.
 
-**notification_settings** — enabled channels, priority order, delivery mode
-(`simultaneous`|`priority_fallback`), retry policy. Admin-configurable.
+**notification_settings** has a singleton row, created by an explicit evaluation
+or admin update, for six category enable flags, a daily count reminder time
+(default 21:30 in the configured business timezone), and last evaluation time.
+**notification_count_rules** opts individual active ingredients into daily
+physical-count reminders. None are opted in by the migration or demo seed.
+Used Stock and receipts never satisfy a physical count.
+
+No delivery-attempt or external-channel table is created in Step 1. Future
+email/LINE/push delivery must track attempts separately from event and read
+state, without treating provider success as acknowledgement or resolution.
 
 ## 5. Business logic
 
@@ -666,35 +681,47 @@ verification (D3). Descriptive levels only — no fabricated percentages.
 - Conversion happens only at the edges: API input/output and schedule
   computation convert UTC ⇄ business tz in the service layer.
 
-### 5.7 Scheduled notifications (Phase 4)
+### 5.7 Explicit notification evaluation (Phase 4 Step 1)
 
-- **APScheduler 3.x** (`>=3.10, <4`), `AsyncIOScheduler`, pinned in
-  requirements (D17). Version 4 is not adopted until its job-store API is
-  stable and validated.
-- **Job store:** SQLAlchemy-backed (same database), so job definitions survive
-  restarts. Business rules live in our event-evaluation code, not in cron
-  entries.
-- **Single process for MVP:** exactly one scheduler runs inside the one
-  FastAPI process. `coalesce=True` and `max_instances=1` on every job, plus a
-  `misfire_grace_time`, so a busy loop never stacks duplicate runs.
-- **Restart / missed-job recovery:** on startup, a catch-up pass lists
-  `notification_events` with `status='pending'` and `scheduled_for <= now`
-  and dispatches them. Because dispatch is dedupe-keyed (unique constraint),
-  re-evaluating after a crash is harmless — already-sent events cannot resend.
-- **Duplicate prevention:** every reminder type generates a deterministic
-  `dedupe_key` (e.g. `order_deadline:supplier7:2025-06-09`,
-  `daily_count:2025-06-08`). The unique constraint is the final guard even if
-  evaluation logic runs twice.
-- **Future multi-worker deployment:** the scheduler must remain a singleton.
-  The supported path is to run web workers with `--workers N` (or multiple
-  replicas) **without** the scheduler, plus exactly one dedicated scheduler
-  process (same codebase, `SCHEDULER_ENABLED=true`). If we ever need multiple
-  scheduler replicas, we adopt a leader-election/lock row in the database —
-  documented now, implemented only when needed.
-- **Channel routing:** per `notification_settings` — simultaneous broadcast or
-  priority fallback (next channel only on **send failure**, bounded retries —
-  never on "not yet read"). In-app first; email/LINE/push providers are stubs
-  behind the same interface and disable safely when unconfigured (D13).
+Authenticated staff or administrators call CSRF-protected
+`POST /api/v1/notifications/evaluate`. Ordinary GETs, application startup,
+and the dashboard never evaluate or write. The injectable UTC clock and
+business-date boundary support deterministic tests. Evaluation first derives
+conditions through existing scheduling, forecast, recommendation, ledger and
+order services, then persists only notification rows/settings. A SQLite
+`BEGIN IMMEDIATE` write-intent transaction serializes concurrent evaluations;
+unique keys and bounded transaction retries protect replays. Inventory, POs,
+receipts and their ledgers are never mutated by evaluation.
+
+Daily count uses only `reconciliation`/`remaining` entries on the applicable
+business date. It aggregates missing configured ingredients after the selected
+local reminder time. Order deadlines use supplier-specific reminder/cutoff
+instants and one notice per supplier/date, with confirmed incoming already
+subtracted by D42. Earlier shortages withhold numeric order instructions;
+uncertain supply triggers separate order-verification notices. Required supplier
+contact starts 24 hours before its own deadline and never claims contact
+completion. Forecast alerts distinguish negative closes from possible
+pre-delivery shortages, actual stock from projected stock, and stale/uncertain
+inputs. Pending deliveries use ordered minus accepted received, retain their
+original expected date and do not infer a new arrival.
+
+Priority rules: shortage within two days is critical, later shortage high;
+order cutoff within 24 hours high, earlier normal; required contact within 12
+hours high, earlier normal; delivery two or more days overdue or explicitly
+delayed high, otherwise normal; count and pending-order verification normal.
+These are documented Step 1 thresholds, not inferred urgency for every event.
+Expired cutoffs/contact deadlines become expired, changed cycles superseded,
+and business conditions that are demonstrably satisfied resolved. Unknown
+forecast/demand inputs preserve prior unresolved risk. Reading and acknowledging
+do not close an event. A material active-message update resets account read/ack
+so new instructions are seen. Resolved history is retained; reappearance gets
+a new episode key. Last evaluation time is exposed; the UI flags snapshots
+older than one hour as needing refresh before action.
+
+Future background scheduling must call this same explicit evaluator, not
+duplicate calculations. Run one scheduler worker with retry and clock/catch-up
+policy, then design separate provider attempts and routing. No scheduler or
+external provider runs in Step 1; the older D17 scheduler design is deferred.
 
 ### 5.8 Authentication & mobile readiness
 

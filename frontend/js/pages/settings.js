@@ -40,7 +40,74 @@ SM.pages.settings = {
     } catch { /* health info is optional on this page */ }
 
     if (SM.auth.isAdmin()) {
+      await this.renderNotificationSettings(view);
       await this.renderAdminUsers(view);
+    }
+  },
+
+  async renderNotificationSettings(view) {
+    const ui = SM.ui;
+    const card = ui.el("section", {class: "card"},
+      ui.el("h2", {class: "card__title", text: "Notification Settings (Administrator)"}),
+      ui.el("p", {class: "field__hint", text: "In-app notifications are created only when someone selects Refresh tasks in Notifications. No background or external messages are sent."}));
+    view.append(card);
+    try {
+      const [settings, catalog] = await Promise.all([SM.api.get("/notifications/settings"), SM.data.catalog()]);
+      const form = ui.el("form", {novalidate: "novalidate"});
+      const flags = [
+        ["daily_count_enabled", "Daily inventory count reminders"],
+        ["order_cutoff_enabled", "Supplier ordering reminders"],
+        ["supplier_contact_enabled", "Required supplier contact reminders"],
+        ["forecast_shortage_enabled", "Forecast shortage alerts"],
+        ["verify_pending_order_enabled", "Pending order verification alerts"],
+        ["pending_delivery_enabled", "Pending or delayed delivery reminders"],
+      ];
+      const controls = {};
+      const options = ui.el("div", {class: "notification-settings-grid"});
+      for (const [key, label] of flags) {
+        const input = ui.el("input", {type: "checkbox", id: `notification-${key}`, checked: settings[key]});
+        controls[key] = input;
+        options.append(ui.el("label", {class: "notification-check", for: input.id}, input, ui.el("span", {text: label})));
+      }
+      const dailyTime = ui.el("input", {class: "input", id: "notification-daily-time", type: "time",
+        value: settings.daily_count_time.slice(0, 5)});
+      const ingredients = ui.el("fieldset", {class: "notification-count-scope"},
+        ui.el("legend", {text: "Ingredients requiring daily physical counts"}),
+        ui.el("p", {class: "field__hint", text: "Select only ingredients whose daily count is required. Used Stock entries and receipts do not complete a physical count."}));
+      const ingredientChecks = new Map();
+      for (const ingredient of catalog.ingredients.filter(row => row.status === "active")) {
+        const input = ui.el("input", {type: "checkbox", checked: settings.daily_count_ingredient_ids.includes(ingredient.id)});
+        ingredientChecks.set(ingredient.id, input);
+        ingredients.append(ui.el("label", {class: "notification-check"}, input, ui.el("span", {text: ingredient.name})));
+      }
+      if (!ingredientChecks.size) ingredients.append(ui.empty("No active ingredients are available."));
+      const feedback = ui.el("div", {role: "status", "aria-live": "polite"});
+      const save = ui.el("button", {class: "btn", type: "submit", text: "Save notification settings"});
+      form.append(options, ui.el("div", {class: "field"},
+        ui.el("label", {class: "field__label", for: "notification-daily-time", text: "Daily inventory reminder time"}),
+        dailyTime, ui.el("span", {class: "field__hint", text: "Business timezone: Asia/Tokyo by default. The configured business timezone applies."})),
+        ingredients, feedback, save);
+      form.addEventListener("submit", async event => {
+        event.preventDefault();
+        ui.clear(feedback);
+        if (!/^\d{2}:\d{2}$/.test(dailyTime.value)) {
+          dailyTime.setAttribute("aria-invalid", "true");
+          feedback.append(ui.alert("Enter a valid daily reminder time.")); dailyTime.focus(); return;
+        }
+        dailyTime.removeAttribute("aria-invalid");
+        save.disabled = true;
+        try {
+          const payload = Object.fromEntries(flags.map(([key]) => [key, controls[key].checked]));
+          payload.daily_count_time = dailyTime.value;
+          payload.daily_count_ingredient_ids = [...ingredientChecks].filter(([, input]) => input.checked).map(([id]) => id);
+          await SM.api.patch("/notifications/settings", payload);
+          feedback.append(ui.alert("Notification settings saved. Refresh tasks to evaluate the new rules.", "info"));
+        } catch (error) { feedback.append(ui.alert(error.message)); }
+        finally { save.disabled = false; }
+      });
+      card.append(form);
+    } catch (error) {
+      card.append(ui.alert(error.message));
     }
   },
 

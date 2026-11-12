@@ -9,6 +9,7 @@ SM.pages.dashboard = {
     const ui = SM.ui;
     const planningTask = SM.api.get("/recommendations")
       .then(data => ({data}), error => ({error}));
+    const notificationsTask = SM.notificationUI.dashboardCard();
     const { rows, ingredients, suppliers } = await SM.data.catalog();
     const transactions = await SM.api.get("/inventory/transactions?limit=8");
     const deliveries = await SM.api.get(
@@ -44,6 +45,7 @@ SM.pages.dashboard = {
     view.append(planning.data ? SM.plannerUI.summaryCard(planning.data) : ui.el("div", {class: "card"},
       ui.el("h2", {class: "card__title", text: "Smart ordering"}), ui.alert(planning.error.message),
       ui.el("a", {href: "#/planner", text: "Open Order Planner to retry →"})));
+    view.append(await notificationsTask);
 
     // Upcoming deliveries — ordered but not yet received (Phase 2 Step 2).
     const deliveriesCard = ui.el("div", { class: "card" },

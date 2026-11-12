@@ -1,6 +1,7 @@
 """The development reset preserves auth/schema and replaces dependent demo data."""
 
 from decimal import Decimal
+from datetime import datetime, time, timezone
 from pathlib import Path
 
 import pytest
@@ -9,7 +10,8 @@ from sqlalchemy import func, select, text
 from app.config import Settings
 from app.models import (
     AuditLog, DeliveryReceipt, DeliveryReceiptItem, Ingredient, IngredientDemandSetting,
-    InventoryTransaction, PurchaseOrder, Supplier, Unit, User, UserSession,
+    InventoryTransaction, NotificationCountRule, NotificationEvent, NotificationSetting,
+    NotificationUserState, PurchaseOrder, Supplier, Unit, User, UserSession,
 )
 from app.reset_demo import (
     CONFIRMATION, backup_database, remove_demo_operations, verify_demo_dataset,
@@ -66,7 +68,21 @@ def test_reset_reseeds_after_receiving_without_losing_auth_or_migrations(
     with client.app.state.session_factory() as db:
         verify_demo_dataset(db)
         db.add(IngredientDemandSetting(ingredient_id=egg_id, enabled=False, monday=Decimal("1")))
+        stamp = datetime.now(timezone.utc)
+        db.add(NotificationSetting(id=1, daily_count_time=time(21, 30), updated_at=stamp,
+            daily_count_enabled=True, order_cutoff_enabled=True, supplier_contact_enabled=True,
+            forecast_shortage_enabled=True, verify_pending_order_enabled=True, pending_delivery_enabled=True))
+        db.add(NotificationCountRule(ingredient_id=egg_id, enabled=True))
+        db.add(NotificationEvent(condition_key="reset-demo-notice", dedupe_key="reset-demo-notice",
+            type="pending_delivery", priority="normal", status="active", title="Demo delivery",
+            message="Demo order remains outstanding.", details_json="{}", ingredient_id=egg_id,
+            purchase_order_id=order_id, business_date=stamp.date(), navigation_target=f"#/orders?order_id={order_id}",
+            created_at=stamp, updated_at=stamp))
         db.flush()
+        notice_id = db.scalar(select(NotificationEvent.id).where(NotificationEvent.dedupe_key == "reset-demo-notice"))
+        db.add(NotificationUserState(notification_id=notice_id, user_id=1, read_at=stamp))
+        db.flush()
+        migration_before = db.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
         accounts = {u.username: (u.id, u.password_hash) for u in db.scalars(select(User))}
         sessions = db.scalar(select(func.count(UserSession.id)))
         units = db.scalar(select(func.count(Unit.id)))
@@ -84,10 +100,14 @@ def test_reset_reseeds_after_receiving_without_losing_auth_or_migrations(
         assert db.scalar(select(func.count(DeliveryReceipt.id))) == 0
         assert db.scalar(select(func.count(DeliveryReceiptItem.id))) == 0
         assert db.scalar(select(func.count(IngredientDemandSetting.ingredient_id))) == 0
+        assert db.scalar(select(func.count(NotificationEvent.id))) == 0
+        assert db.scalar(select(func.count(NotificationUserState.id))) == 0
+        assert db.scalar(select(func.count(NotificationCountRule.ingredient_id))) == 0
+        assert db.get(NotificationSetting, 1).daily_count_time == time(21, 30)
         assert db.scalar(select(func.count(AuditLog.id))) == 0
         assert db.scalar(select(func.count(InventoryTransaction.id))) == 8
         assert db.scalar(select(func.count(Supplier.id))) == 3
-        assert db.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0008_ingredient_demand_settings"
+        assert db.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == migration_before == "0009_notification_center"
         korean = db.scalar(select(Ingredient).where(Ingredient.name == "Korean Noodles"))
         assert korean.unit.abbreviation == "pc"
         assert korean.count_units_per_package == Decimal("60")
