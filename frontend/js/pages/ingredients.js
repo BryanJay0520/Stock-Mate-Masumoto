@@ -88,6 +88,10 @@ SM.pages.ingredients = {
     const tbody = ui.el("tbody");
     for (const item of ingredients) {
       const actions = ui.el("div", { class: "button-row" });
+      actions.append(ui.el("button", {
+        class: "btn btn--secondary btn--small", text: "Forecast Settings",
+        onclick: () => SM.demandUI.open(item),
+      }));
       if (isAdmin) {
         actions.append(
           ui.el("button", {

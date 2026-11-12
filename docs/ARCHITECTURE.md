@@ -271,10 +271,26 @@ per supplier (optionally per ingredient):
 
 ### 4.3 Forecasting (Phase 3)
 
-**demand_forecast_weekdays** — `weekday` PK (0–6), `expected_servings` NUMERIC.
+**ingredient_demand_settings** (Step 1, migration `0008`, D39) —
+`ingredient_id` PK/FK, `enabled`, seven nullable `NUMERIC(14,3)` columns
+`monday` through `sunday`, nullable `safety_stock`, optional `notes`,
+`version`, `created_at`, and `updated_at`. Each quantity has a nonnegative
+database check. No row is inserted by migration or demo seeding. Null is an
+unknown estimate, distinct from zero. This replaces the earlier planned
+global weekday serving defaults for ingredient forecasting.
 
-**demand_forecast_overrides** — `date` PK, `expected_servings` NUMERIC, `note`,
-`created_by` FK, `created_at`. Date-specific override beats the weekday default.
+Read/update API: `GET/PATCH /api/v1/ingredients/{id}/demand-settings`.
+Reads synthesize an unconfigured view without inserting a row. PATCH updates
+only supplied fields; null clears a quantity. `expected_version=0` creates a
+first row, subsequent updates require the current version. Admin + CSRF writes
+reuse the existing atomic transaction and audit conventions. Staff can read.
+The response exposes configured day count, complete/forecast-ready flags, and
+an exact weekly sum only if all seven days are known. Enabled partial rows
+remain incomplete. The planning safety quantity does not change the existing
+ingredient inventory warning threshold.
+
+**Future date overrides** will be keyed by ingredient and business date and
+override that ingredient's weekday estimate. They are not implemented in Step 1.
 
 **confidence_config** — `ingredient_id` PK/FK,
 `high_freshness_hours` (default 24), `medium_freshness_hours` (default 72),
@@ -472,8 +488,7 @@ arrivals only count from the following business day.
 **Projection walk** (per ingredient, server-side):
 
 ```
-expectedServings(date)  = override[date] ?? weekdayDefault[weekday(date)]
-dailyUse(ingredient, d) = expectedServings(d) × ingredient.usage_per_serving
+dailyUse(ingredient, d) = ingredientDateOverride[d] ?? ingredientWeekdayEstimate[weekday(d)]
 
 for each business day d in horizon (7/14/30):
   incoming(d) = Σ confirmed PO items with expected_delivery_date = d
@@ -486,8 +501,9 @@ for each business day d in horizon (7/14/30):
                 green  otherwise
 ```
 
-**Missing-input behavior:** no recent count, no weekday forecast row, or no
-usage-per-serving for an active ingredient → that ingredient's affected dates
+**Future missing-input behavior (D39):** disabled configurations are excluded.
+Absent or incomplete enabled demand inputs and no recent count must be
+handled explicitly as incomplete, never as zero. That ingredient's affected dates
 are **GRAY ("incomplete data")**, never silently green. The overall calendar
 date status = worst status across active ingredients.
 

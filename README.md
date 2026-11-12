@@ -3,12 +3,13 @@
 Smart restaurant inventory management and supply planning system.
 Web-based, mobile-ready, designed initially for a ramen restaurant.
 
-🚧 **Work in Progress — Phase 2 Steps 1–3 complete; forecasting has not started**
+🚧 **Work in Progress — Phase 3 Step 1 demand settings implemented; stock projections pending**
 
 The responsive web UI includes login, dashboard, inventory, package-aware
 daily stock entry, supplier and ingredient management, purchase orders and
 delivery receiving, transaction history with corrections, and account
-settings. Forecasting and notifications arrive in later phases.
+settings, including editable ingredient demand estimates. Stock projections,
+smart ordering, and notifications arrive in later steps.
 
 ## What it does (planned)
 
@@ -134,6 +135,24 @@ node frontend/tests/browser_smoke.mjs
 ```
 
 Screenshots are saved to a temp directory whose path is printed at the end.
+
+## Ingredient forecast settings
+
+Open **Ingredients → Forecast Settings** for an ingredient. Administrators can
+set its Monday–Sunday estimated maximum consumption, enable or disable future
+forecast use, set a planning safety buffer, and record estimation notes.
+**Apply to Monday–Friday** copies the shortcut quantity into those five days;
+Saturday and Sunday stay independent. Every quantity is in the displayed stock
+unit. Blank means not configured; zero means intentionally no consumption.
+Staff can open the same settings in read-only mode.
+
+The weekly preview totals the seven daily estimates and excludes safety stock.
+For Korean Noodles, 40 pc on each weekday and 60 pc on Saturday/Sunday gives
+320 pc per week; a 60 pc planning buffer is separate. These values are editable
+and are demonstrated only in isolated tests, not automatically saved to the
+development database. The existing Box × 60 counting configuration is reused.
+This step stores planning inputs only; future stock projections and ordering
+recommendations are not implemented yet.
 
 ## Authentication (added Step 3)
 

@@ -41,6 +41,7 @@ SM.app = {
   },
 
   showLogin(message) {
+    SM.ui.dismissModals();
     this.shellReady = false;
     document.getElementById("shell").classList.remove("is-visible");
     let loginRoot = document.getElementById("login-root");

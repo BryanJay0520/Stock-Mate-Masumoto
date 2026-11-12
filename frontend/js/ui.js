@@ -5,6 +5,11 @@
 window.SM = window.SM || {};
 
 SM.ui = {
+  activeModals: new Set(),
+
+  dismissModals() {
+    [...this.activeModals].reverse().forEach(destroy => destroy());
+  },
   // el("td", { class: "x", "data-label": "Qty", text: "5" }, child1, ...)
   el(tag, attrs = {}, ...children) {
     const node = document.createElement(tag);
@@ -52,6 +57,8 @@ SM.ui = {
 
   toast(message, kind = "success") {
     const container = document.getElementById("toasts");
+    [...container.children].filter(node => node.textContent === message).forEach(node => node.remove());
+    while (container.children.length >= 2) container.firstElementChild.remove();
     const toast = this.el("div", { class: `toast toast--${kind}`, text: message });
     container.append(toast);
     setTimeout(() => toast.remove(), 5000);
@@ -157,7 +164,9 @@ SM.ui = {
   },
 
   // Modal dialog. Returns a close function. Focus is moved into the dialog.
-  modal({ title, body, actions = [], wide = false }) {
+  modal({ title, body, actions = [], wide = false, beforeClose = () => true, onClose = () => {} }) {
+    this.clear(document.getElementById("toasts"));
+    const previousFocus = document.activeElement;
     const overlay = this.el("div", { class: "modal-overlay" });
     const dialog = this.el("div", {
       class: "modal", role: "dialog", "aria-modal": "true", "aria-label": title,
@@ -165,10 +174,19 @@ SM.ui = {
     if (wide) dialog.style.maxWidth = "760px";
     dialog.append(this.el("h2", { class: "modal__title", text: title }));
     dialog.append(body);
-    const close = () => {
+    let removed = false;
+    const destroy = () => {
+      if (removed) return;
+      removed = true;
       overlay.remove();
       document.removeEventListener("keydown", onKey);
+      this.activeModals.delete(destroy);
+      document.getElementById("app").inert = Boolean(document.querySelector(".modal-overlay"));
+      onClose();
+      if (previousFocus?.isConnected) previousFocus.focus();
     };
+    const close = () => { if (beforeClose()) destroy(); };
+    this.activeModals.add(destroy);
     if (actions.length) {
       dialog.append(this.el("div", { class: "button-row" }, actions));
     }
@@ -177,10 +195,23 @@ SM.ui = {
       if (event.target === overlay) close();
     });
     const onKey = (event) => {
+      if (overlay !== document.querySelector("#modals .modal-overlay:last-child")) return;
       if (event.key === "Escape") close();
+      if (event.key === "Tab") {
+        const focusable = [...dialog.querySelectorAll("input, select, textarea, button, [tabindex]")]
+          .filter(node => !node.disabled && node.tabIndex >= 0 && node.getClientRects().length);
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault(); last?.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault(); first?.focus();
+        }
+      }
     };
     document.addEventListener("keydown", onKey);
     document.getElementById("modals").append(overlay);
+    document.getElementById("app").inert = true;
     const firstInput = dialog.querySelector("input, select, textarea, button");
     if (firstInput) firstInput.focus();
     return close;
@@ -189,18 +220,20 @@ SM.ui = {
   confirmDialog({ title, message, confirmLabel = "Confirm", danger = false }) {
     return new Promise((resolve) => {
       let close;
+      let approved = false;
       const cancelButton = this.el("button", {
         class: "btn btn--secondary", text: "Cancel",
-        onclick: () => { close(); resolve(false); },
+        onclick: () => close(),
       });
       const confirmButton = this.el("button", {
         class: danger ? "btn btn--danger" : "btn", text: confirmLabel,
-        onclick: () => { close(); resolve(true); },
+        onclick: () => { approved = true; close(); },
       });
       close = this.modal({
         title,
         body: this.el("p", { text: message }),
         actions: [cancelButton, confirmButton],
+        onClose: () => resolve(approved),
       });
     });
   },

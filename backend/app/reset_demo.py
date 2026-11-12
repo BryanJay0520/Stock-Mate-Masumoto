@@ -20,11 +20,13 @@ from pathlib import Path
 from sqlalchemy import delete, select, text, update
 from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 
 from app.config import PROJECT_ROOT, Settings, get_settings
 from app.database import create_db_engine, create_session_factory
 from app.models import (
-    AppSetting, AuditLog, DeliveryReceipt, DeliveryReceiptItem, Ingredient,
+    AppSetting, AuditLog, DeliveryReceipt, DeliveryReceiptItem, Ingredient, IngredientDemandSetting,
     IngredientStockState, InventoryTransaction, PurchaseOrder,
     PurchaseOrderItem, Supplier, SupplierCalendarException,
     SupplierIngredient, SupplierScheduleRule, User,
@@ -38,7 +40,7 @@ CONFIRMATION = "RESET_FICTIONAL_STOCKMATE_DATA"
 DEMO_MARKERS = (SEED_MARKER_KEY, SCHEDULE_SEED_MARKER_KEY, ORDER_SEED_MARKER_KEY)
 OPERATIONAL_AUDIT_TYPES = (
     "supplier", "ingredient", "ingredient_stock_state", "schedule_rule",
-    "schedule_exception", "purchase_order", "delivery_receipt",
+    "schedule_exception", "purchase_order", "delivery_receipt", "ingredient_demand",
 )
 
 
@@ -85,8 +87,11 @@ def verify_demo_dataset(session: Session) -> dict[str, int]:
     if other_audits:
         raise ValueError("Unknown audit entities exist; refusing the reset.")
     revision = session.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-    if revision != "0007_inventory_count_packages":
-        raise ValueError("Database must already be at migration 0007.")
+    from app.db_admin import BACKEND_DIR
+    config = Config(str(BACKEND_DIR / "alembic.ini"))
+    config.set_main_option("script_location", str(BACKEND_DIR / "alembic"))
+    if revision != ScriptDirectory.from_config(config).get_current_head():
+        raise ValueError("Database must already be at the current migration head.")
     violations = session.execute(text("PRAGMA foreign_key_check")).all()
     if violations:
         raise ValueError("Existing database has foreign-key violations.")
@@ -122,6 +127,7 @@ def remove_demo_operations(session: Session) -> None:
     session.execute(delete(IngredientStockState))
     session.execute(delete(SupplierCalendarException))
     session.execute(delete(SupplierScheduleRule))
+    session.execute(delete(IngredientDemandSetting))
     # The composite primary-supplier FK points back to supplier_ingredients.
     session.execute(update(Ingredient).values(primary_supplier_id=None))
     session.execute(delete(SupplierIngredient))

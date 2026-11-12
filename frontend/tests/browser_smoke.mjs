@@ -365,7 +365,7 @@ async function supplierTests() {
     await evaluate(`[...document.querySelectorAll(".modal-overlay button")].find(b => b.textContent === "Archive").click()`);
     await waitFor(`document.querySelector(".modal-overlay .alert--error")`);
     await assertText(".modal-overlay .alert--error", "Korean Noodles");
-    await evaluate(`document.querySelector(".modal-overlay").remove()`);
+    await evaluate(`document.dispatchEvent(new KeyboardEvent("keydown", {key:"Escape"}))`);
   });
 
   await test("archive and reactivate work for an unassigned supplier", async () => {
@@ -419,7 +419,7 @@ async function scheduleTests() {
   });
 
   await test("admin can add a delivery schedule through the panel", async () => {
-    await evaluate(`${overlay}.remove()`); // close the Tokyo panel
+    await evaluate(`document.dispatchEvent(new KeyboardEvent("keydown", {key:"Escape"}))`); // close the Tokyo panel
     await evaluate(`(() => {
       const row = [...document.querySelectorAll("#view tbody tr")]
         .find(r => r.textContent.includes("Browser Test Foods"));
@@ -455,7 +455,7 @@ async function scheduleTests() {
       return heading ? heading.parentElement.textContent : "";
     })()`);
     assert(oppText.includes("Sunday"), `new rule missing from opportunities: ${oppText.slice(0, 200)}`);
-    await evaluate(`${overlay}.remove()`);
+    await evaluate(`document.dispatchEvent(new KeyboardEvent("keydown", {key:"Escape"}))`);
   });
 
   await test("schedule validation errors are shown in the form", async () => {
@@ -484,8 +484,8 @@ async function scheduleTests() {
       return ${overlay}.querySelector(".alert--error")?.textContent || "";
     })()`);
     assert(errorText.includes("already exists"), `expected conflict error, got: ${errorText}`);
-    await evaluate(`${overlay}.remove()`); // close form
-    await evaluate(`${overlay}.remove()`); // close panel
+    await evaluate(`document.dispatchEvent(new KeyboardEvent("keydown", {key:"Escape"}))`); // close form
+    await evaluate(`document.dispatchEvent(new KeyboardEvent("keydown", {key:"Escape"}))`); // close panel
   });
 }
 
@@ -507,7 +507,7 @@ async function staffScheduleTests() {
       return labels.some(l => ["Add Delivery Schedule", "Edit", "Deactivate", "Add Exception"].includes(l));
     })()`);
     assert(!adminControls, "staff should not see schedule mutation controls");
-    await evaluate(`document.querySelector(".modal-overlay").remove()`);
+    await evaluate(`document.dispatchEvent(new KeyboardEvent("keydown", {key:"Escape"}))`);
   });
 }
 
@@ -699,7 +699,7 @@ async function receivingTests() {
       "receipt history overflows on mobile");
     await screenshot("receipt-history-390");
     await setViewport(1440);
-    await evaluate(`${overlay}.remove()`);
+    await evaluate(`document.dispatchEvent(new KeyboardEvent("keydown", {key:"Escape"}))`);
   });
 
   await test("over-receiving through the form is blocked server-side", async () => {
@@ -750,7 +750,7 @@ async function receivingTests() {
       }).then(r => r.status);
     })()`);
     assert(rejected === 409, `expected 409 over_receive, got ${rejected}`);
-    await evaluate(`${overlay}.remove()`);
+    await evaluate(`document.dispatchEvent(new KeyboardEvent("keydown", {key:"Escape"}))`);
   });
 }
 
@@ -861,9 +861,9 @@ async function ingredientTests() {
 
   await test("ingredient catalog edit does not change the stock balance", async () => {
     await evaluate(`(() => {
-      [...document.querySelectorAll("#view tbody tr")]
-        .find(r => r.textContent.includes("Browser Spice"))
-        .querySelectorAll("button")[0].click(); // Edit
+      const row = [...document.querySelectorAll("#view tbody tr")]
+        .find(r => r.textContent.includes("Browser Spice"));
+      [...row.querySelectorAll("button")].find(b => b.textContent === "Edit").click();
     })()`);
     await waitFor(`document.getElementById("ingredient-category")`);
     await evaluate(`(() => {
@@ -874,6 +874,139 @@ async function ingredientTests() {
     const stock = await apiAsSession("/inventory/stock");
     const spice = stock.find((r) => r.ingredient_name === "Browser Spice");
     assert(spice.current_quantity === "12.500", `balance changed by catalog edit: ${spice.current_quantity}`);
+  });
+}
+
+async function openDemand(name = "Korean Noodles") {
+  await navigate("/ingredients");
+  await waitFor(`document.querySelector("#view").textContent.includes(${JSON.stringify(name)})`);
+  await evaluate(`(() => {
+    const row = [...document.querySelectorAll("#view tbody tr")].find(r => r.textContent.includes(${JSON.stringify(name)}));
+    const button = [...row.querySelectorAll("button")].find(b => b.textContent === "Forecast Settings");
+    button.focus(); button.click();
+  })()`);
+  await waitFor(`document.getElementById("demand-form")`);
+}
+
+async function demandTests() {
+  let before;
+  await test("forecast settings start unconfigured and reject invalid input", async () => {
+    before = (await apiAsSession("/inventory/stock")).find(i => i.ingredient_name === "Korean Noodles");
+    await openDemand();
+    await assertText("#demand-preview", "0 of 7 days configured");
+    assert(await evaluate(`document.getElementById("demand-monday").value === ""`), "unknown value became zero");
+    await evaluate(`(() => {
+      const input = document.getElementById("demand-monday"); input.value = "-1";
+      input.dispatchEvent(new Event("input", {bubbles: true}));
+      document.querySelector("#demand-form button[type=submit]").click();
+    })()`);
+    await waitFor(`document.getElementById("demand-monday").getAttribute("aria-invalid") === "true"`);
+    assert(await evaluate(`document.activeElement.id === "demand-monday"`), "invalid field did not receive focus");
+  });
+
+  await test("weekday shortcut and editable weekends save the 320-piece Korean example", async () => {
+    await evaluate(`(() => {
+      const set = (id, value) => { const node = document.getElementById(id); node.value = value; node.dispatchEvent(new Event("input", {bubbles:true})); };
+      set("demand-weekdays", "40");
+      [...document.querySelectorAll("#demand-form button")].find(b => b.textContent === "Apply to Monday–Friday").click();
+      set("demand-saturday", "60"); set("demand-sunday", "60"); set("demand-safety_stock", "60");
+      set("demand-notes", "Restaurant planning example");
+      document.getElementById("demand-enabled").click();
+    })()`);
+    await assertText("#demand-preview", "320 pc");
+    await screenshot("forecast-settings-desktop");
+    await evaluate(`document.querySelector("#demand-form button[type=submit]").click()`);
+    await waitFor(`!document.getElementById("demand-form")`);
+    const after = (await apiAsSession("/inventory/stock")).find(i => i.ingredient_name === "Korean Noodles");
+    assert(JSON.stringify(after) === JSON.stringify(before), "demand settings changed stock/package data");
+    const config = await apiAsSession(`/ingredients/${before.ingredient_id}/demand-settings`);
+    assert(config.weekly_estimated_demand === "320.000" && config.forecast_ready && config.safety_stock === "60.000", JSON.stringify(config));
+  });
+
+  await test("individual weekdays remain editable and stale edits retain the draft", async () => {
+    await openDemand();
+    await evaluate(`(() => {
+      const input = document.getElementById("demand-tuesday"); input.value = "41";
+      input.dispatchEvent(new Event("input", {bubbles: true}));
+    })()`);
+    await assertText("#demand-preview", "321 pc");
+    await evaluate(`(async () => {
+      const path = "/ingredients/${before.ingredient_id}/demand-settings";
+      const current = await SM.api.get(path);
+      await SM.api.patch(path, {expected_version: current.version, tuesday: "45"});
+      document.querySelector("#demand-form button[type=submit]").click();
+    })()`);
+    await waitFor(`document.getElementById("demand-feedback").textContent.includes("changed since")`);
+    assert(await evaluate(`document.getElementById("demand-tuesday").value === "41"`), "draft lost after conflict");
+    await evaluate(`[...document.querySelectorAll("#demand-feedback button")].find(b => b.textContent === "Reload latest settings").click()`);
+    await waitFor(`document.getElementById("demand-tuesday")?.value === "45"`);
+    await evaluate(`(() => {
+      const input = document.getElementById("demand-tuesday"); input.value = "40";
+      input.dispatchEvent(new Event("input", {bubbles: true}));
+      document.querySelector("#demand-form button[type=submit]").click();
+    })()`);
+    await waitFor(`!document.getElementById("demand-form")`);
+  });
+
+  await test("failed forecast save preserves quantities and can be retried", async () => {
+    await openDemand();
+    await evaluate(`(() => {
+      const input = document.getElementById("demand-monday"); input.value = "40.125";
+      input.dispatchEvent(new Event("input", {bubbles: true}));
+    })()`);
+    try {
+      await send("Network.emulateNetworkConditions", {offline: true, latency: 0, downloadThroughput: -1, uploadThroughput: -1});
+      await evaluate(`document.querySelector("#demand-form button[type=submit]").click()`);
+      await waitFor(`document.getElementById("demand-feedback").textContent.includes("Could not reach")`);
+      assert(await evaluate(`document.getElementById("demand-monday").value === "40.125"`), "offline failure lost input");
+    } finally {
+      await send("Network.emulateNetworkConditions", {offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1});
+    }
+    await evaluate(`(() => {
+      const input = document.getElementById("demand-monday"); input.value = "40";
+      input.dispatchEvent(new Event("input", {bubbles: true}));
+      document.querySelector("#demand-form button[type=submit]").click();
+    })()`);
+    await waitFor(`!document.getElementById("demand-form")`);
+  });
+
+  await test("a different ingredient keeps unknown days distinct from zero", async () => {
+    await openDemand("Chinese Noodles");
+    await evaluate(`(() => {
+      const input = document.getElementById("demand-monday"); input.value = "0";
+      input.dispatchEvent(new Event("input", {bubbles: true}));
+      document.querySelector("#demand-form button[type=submit]").click();
+    })()`);
+    await waitFor(`!document.getElementById("demand-form")`);
+    const chinese = (await apiAsSession("/ingredients")).find(i => i.name === "Chinese Noodles");
+    const config = await apiAsSession(`/ingredients/${chinese.id}/demand-settings`);
+    assert(config.monday === "0.000" && config.tuesday === null && !config.enabled, JSON.stringify(config));
+    const korean = await apiAsSession(`/ingredients/${before.ingredient_id}/demand-settings`);
+    assert(korean.monday === "40.000", "settings leaked between ingredients");
+  });
+
+  await test("mobile forecast dialog traps focus and confirms discarding unsaved settings", async () => {
+    await setViewport(390);
+    await openDemand();
+    const overflow = await evaluate(`(() => { const modal = document.querySelector(".modal"); return modal.scrollWidth - modal.clientWidth; })()`);
+    assert(overflow <= 1, `forecast modal overflows by ${overflow}`);
+    await screenshot("forecast-settings-390");
+    await evaluate(`document.getElementById("demand-preview").scrollIntoView({block:"center"})`);
+    await screenshot("forecast-settings-390-preview");
+    await evaluate(`[...document.querySelectorAll(".modal button")].find(b => b.textContent === "Close").focus()`);
+    await send("Input.dispatchKeyEvent", {type: "keyDown", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9});
+    await send("Input.dispatchKeyEvent", {type: "keyUp", key: "Tab", code: "Tab", windowsVirtualKeyCode: 9});
+    assert(await evaluate(`document.activeElement.id === "demand-enabled"`), "focus escaped modal");
+    await evaluate(`(() => {
+      const input = document.getElementById("demand-monday"); input.value = "99";
+      input.dispatchEvent(new Event("input", {bubbles: true}));
+      document.dispatchEvent(new KeyboardEvent("keydown", {key:"Escape"}));
+    })()`);
+    await assertText("#demand-feedback", "unsaved forecast settings");
+    await evaluate(`[...document.querySelectorAll("#demand-feedback button")].find(b => b.textContent === "Discard changes").click()`);
+    await waitFor(`!document.getElementById("demand-form")`);
+    assert(await evaluate(`document.activeElement.textContent === "Forecast Settings"`), "focus not restored");
+    await setViewport(1440);
   });
 }
 
@@ -902,7 +1035,7 @@ async function correctionTests() {
     })()`);
     await waitFor(`document.querySelector(".modal-overlay .alert--error")`);
     await assertText(".modal-overlay .alert--error", "newer physical stock count");
-    await evaluate(`document.querySelector(".modal-overlay").remove()`);
+    await evaluate(`document.dispatchEvent(new KeyboardEvent("keydown", {key:"Escape"}))`);
   });
 }
 
@@ -925,7 +1058,7 @@ async function staffOrderTests() {
     })()`);
     assert(!labels.includes("Cancel Order"), `staff should not see Cancel Order: ${labels}`);
     // Staff CAN advance the workflow (Mark Ordered / Confirm), per requirements.
-    await evaluate(`document.querySelector(".modal-overlay").remove()`);
+    await evaluate(`document.dispatchEvent(new KeyboardEvent("keydown", {key:"Escape"}))`);
   });
 }
 
@@ -999,10 +1132,20 @@ async function staffTests() {
     await assertText("#view .alert--error", "negative");
   });
 
+  await test("staff can read forecast settings without editing controls", async () => {
+    await openDemand();
+    await assertText("#demand-form", "Read-only forecast settings");
+    await assertText("#demand-preview", "320 pc");
+    assert(await evaluate(`document.getElementById("demand-monday").disabled && !document.querySelector("#demand-form button[type=submit]")`), "staff has forecast editing controls");
+    await evaluate(`document.dispatchEvent(new KeyboardEvent("keydown", {key:"Escape"}))`);
+  });
+
   await test("cleared session redirects protected pages to login", async () => {
+    await openDemand();
     await send("Network.clearBrowserCookies");
-    await evaluate(`location.reload()`);
+    await evaluate(`SM.api.get("/ingredients").catch(() => {})`);
     await waitFor(`document.getElementById("login-username")`);
+    assert(await evaluate(`!document.querySelector(".modal-overlay") && !document.getElementById("app").inert`), "expired session left a blocking dialog");
     await assertText(".brand", "StockMate");
   });
 }
@@ -1018,6 +1161,7 @@ try {
   await orderTests();
   await receivingTests();
   await packageCountingTests();
+  await demandTests();
   await ingredientTests();
   await correctionTests();
   await responsiveTests();

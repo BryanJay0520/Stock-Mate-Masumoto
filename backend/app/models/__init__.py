@@ -6,6 +6,7 @@ Importing this package registers every table on ``Base.metadata``
 
 from app.database import Base  # noqa: F401  (re-exported for convenience)
 from app.models.audit import AuditLog
+from app.models.demand import IngredientDemandSetting
 from app.models.ingredient import Ingredient, IngredientStockState
 from app.models.inventory import InventoryTransaction
 from app.models.ordering import PurchaseOrder, PurchaseOrderItem
@@ -21,6 +22,7 @@ __all__ = [
     "Base",
     "AppSetting",
     "AuditLog",
+    "IngredientDemandSetting",
     "Ingredient",
     "IngredientStockState",
     "InventoryTransaction",

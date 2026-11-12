@@ -235,6 +235,13 @@
   font-size: var(--font-size-sm);
 }
 
+.field-error { color: var(--color-critical); font-size: var(--font-size-sm); }
+.input[aria-invalid="true"] { border-color: var(--color-critical); }
+.demand-week { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.demand-shortcut { margin: var(--space-4) 0; padding: var(--space-4); background: var(--color-bg); border-radius: var(--radius-control); }
+.demand-shortcut .field { margin-bottom: var(--space-2); }
+.demand-notes { resize: none; min-height: 96px; }
+
 .input,
 .select,
 .textarea {

@@ -369,3 +369,27 @@ Purchasing packages are supplier-specific `supplier_ingredients` fields:
 and buying package sizes may differ. These fields are ready for Phase 3
 recommendations, which must round up whole-package orders from the selected
 supplier's package size; no Phase 3 forecast behavior starts here.
+
+## D39 — Ingredient demand inputs supersede global serving assumptions
+
+For Phase 3, each ingredient has its own optional one-to-one demand settings
+row: seven nullable daily maximum consumption estimates, nullable planning
+safety stock, enabled state, notes, update time, and revision. Quantities use
+the ingredient's existing stock unit and NUMERIC(14,3). This supersedes the
+global weekday servings × usage-per-serving input described in D10 for future
+forecasting; existing usage-per-serving catalog data remains intact.
+
+No row and a null weekday mean unconfigured, never zero. Explicit zero is a
+valid estimate. Partial settings may be saved, but forecast-ready requires
+enabled, all seven days, safety stock, and an active ingredient. Disabled and
+incomplete settings cannot become usable forecast inputs silently. The weekly
+preview is the sum of the seven estimates only; planning safety stock is a
+separate future buffer, distinct from the existing inventory warning threshold.
+
+Only administrators may mutate settings (CSRF protected); staff may read.
+Updates are audited and require the revision read by the client; stale writes
+return 409 without overwriting newer settings. These writes never touch the
+stock state, ledger, counting packages, purchasing packages, or orders. No
+demand values are seeded automatically. Date overrides, stock projections,
+shortage calculations, cutoff integration, and smart ordering remain future
+steps; purchasing rounding must continue to use supplier package sizes (D38).

@@ -2,7 +2,7 @@
 
 ## Current phase
 
-**Phase 2 — Supplier Scheduling & Ordering: IN PROGRESS** (Phase 1 complete)
+**Phase 3 Step 1 — Editable ingredient demand configuration: complete, approved for commit**
 
 - **Step 1 (skeleton): ✅ COMPLETE** (commit `a9de3bc`)
 - **Step 2 (database models + migrations + seed): ✅ COMPLETE** (commit `c9e72ae`)
@@ -84,7 +84,7 @@
   this review covers the existing SQLite application. Pytest emits an existing
   Starlette/httpx deprecation warning.
 
-### Inventory counting enhancement (2026-11-12, approved for commit)
+### Inventory counting enhancement (2026-11-12, committed as `dd67047`)
 
 - Added optional ingredient counting packages (`count_package_enabled`, name,
   positive canonical units per package, version) and a staff choice between
@@ -118,7 +118,7 @@
   both are wired in `frontend/js/app.js`. No commit, push, deployment, or
   Phase 3 calculations.
 
-### Guarded fictional development data reset (2026-11-12, approved for commit)
+### Guarded fictional development data reset (2026-11-12, committed as `dd67047`)
 
 - Confirmed `environment=development`, no `.env` or database URL override,
   and the exact local SQLite target `backend/stockmate.db` at migration
@@ -153,6 +153,53 @@
   history, and responsive layouts. Pytest emitted the existing Starlette/httpx
   deprecation warning. No commit, push, deployment, or production change.
 
+### Phase 3 Step 1 — Editable ingredient demand configuration (approved for commit)
+
+- Added optional per-ingredient `ingredient_demand_settings` rows with seven
+  independent nullable weekday estimates, planning safety stock, enabled state,
+  notes, version, and UTC timestamps. All quantities use the ingredient's
+  existing unit and exact NUMERIC(14,3). Null remains distinct from explicit
+  zero; partial configurations are allowed but not forecast-ready. Disabled
+  and archived configurations are not forecast-ready either (D39).
+- Added authenticated GET and admin/CSRF PATCH endpoints at
+  `/ingredients/{id}/demand-settings`, with audit snapshots and stale-revision
+  rejection. These operations never write inventory, packages, orders, or
+  receipts. Planning safety stock is distinct from the inventory alert threshold.
+- Ingredient Management now has Forecast Settings for each ingredient, including
+  staff read-only access. The responsive dialog has a Monday–Friday shortcut,
+  independent weekends, stock-unit labels, exact weekly preview, inline
+  validation, retry, conflict recovery, dirty-discard protection, and focus
+  containment/restoration. Shared dialogs are dismissed on session expiry;
+  repeated toasts are deduplicated and cleared before another dialog opens.
+- Korean Noodles was demonstrated only in isolated tests: 40 pc Monday–Friday,
+  60 pc Saturday/Sunday, 320 pc weekly estimate, separate 60 pc planning buffer,
+  existing Box × 60 counting configuration. Every input remains editable.
+  No demand estimates were automatically seeded for any ingredient.
+- Applied additive migration `0008_ingredient_demand_settings` after a checked
+  backup at `backend/backups/stockmate-before-0008-20261112T001520171184Z.db`.
+  Compared every pre-existing row in 16 application tables: all unchanged, no
+  foreign-key violations. The new table is empty in development. No reset or
+  reseed was performed. The development server was restored on port 8000.
+- The guarded development reset now recognizes the migration head and deletes
+  dependent demand rows before ingredient rows, within its existing safeguards.
+- Verification: **214 backend tests passed** (601.19s, one existing
+  Starlette/httpx deprecation warning), **8 frontend unit tests passed**, and
+  **45 real-browser tests passed**. The focused demand/reset run passed 19 tests.
+  Screenshots: Windows temp `stockmate-browser-oRmhht`. Static frontend audit
+  reports only the two existing menu/logout action-detection false positives;
+  real browser tests exercise both controls. DESIGN.md lint has zero errors
+  and four unused-token warnings (those tokens map to existing CSS roles).
+- New files: `backend/app/models/demand.py`, `schemas/demand.py`,
+  `services/demand.py`, `api/v1/routes/demand.py`,
+  `backend/alembic/versions/0008_ingredient_demand_settings.py`,
+  `backend/tests/test_demand_settings.py`,
+  `frontend/js/pages/ingredient-demand.js`, `frontend/tests/demand.test.js`,
+  `DESIGN.md`, and `UX-CONTRACT.md`.
+- Modified files: backend router/model exports, guarded reset and its test;
+  frontend ingredient page, modal/feedback helpers, session UI, script entry,
+  app CSS, browser suite; README, architecture, decisions, status, and handoff.
+  No commit, push, deployment, projection engine, smart ordering, or Step 2 work.
+
 Phase 0 was approved with three final requirements, now reflected in the docs:
 D15 (SQLite-safe concurrency: `BEGIN IMMEDIATE` + atomic conditional UPDATE +
 bounded retries, no `FOR UPDATE` dependency), D23 (all starting quantities —
@@ -167,7 +214,7 @@ junction row; service validates supplier `active` status).
 | 0 | Planning, architecture, docs (incl. review revision) | ✅ Done (commit `e53898d`) |
 | 1 | Inventory MVP: DB, auth, ingredients, **basic supplier CRUD + assignment**, dual stock entry, ledger, dashboard, confidence timestamps | 🔶 Steps 1–7 of 8 done |
 | 2 | Supplier schedule rules, delivery calendars, cutoff engine, purchase orders, delivery confirmation, supplier reminders (engine part), alternative-supplier ordering | 🔶 Steps 1–3 committed (`2a34b14`, `f08e48b`, `bfcb824`) |
-| 3 | Demand forecasting, forecast calendar, status colors, order suggestions, confidence indicators | ⬜ Not started |
+| 3 | Demand forecasting, forecast calendar, status colors, order suggestions, confidence indicators | 🔶 Step 1 demand configuration implemented; Step 2 not started |
 | 4 | Scheduled reminders, in-app notifications, preferences, provider routing | ⬜ Not started |
 | 5 | Analytics, reports, CSV export, simple statistics | ⬜ Not started |
 | 6 | Deployment readiness: security, regression, backups | ⬜ Not started |

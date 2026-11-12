@@ -8,7 +8,7 @@ from sqlalchemy import func, select, text
 
 from app.config import Settings
 from app.models import (
-    AuditLog, DeliveryReceipt, DeliveryReceiptItem, Ingredient,
+    AuditLog, DeliveryReceipt, DeliveryReceiptItem, Ingredient, IngredientDemandSetting,
     InventoryTransaction, PurchaseOrder, Supplier, Unit, User, UserSession,
 )
 from app.reset_demo import (
@@ -65,6 +65,8 @@ def test_reset_reseeds_after_receiving_without_losing_auth_or_migrations(
 
     with client.app.state.session_factory() as db:
         verify_demo_dataset(db)
+        db.add(IngredientDemandSetting(ingredient_id=egg_id, enabled=False, monday=Decimal("1")))
+        db.flush()
         accounts = {u.username: (u.id, u.password_hash) for u in db.scalars(select(User))}
         sessions = db.scalar(select(func.count(UserSession.id)))
         units = db.scalar(select(func.count(Unit.id)))
@@ -81,10 +83,11 @@ def test_reset_reseeds_after_receiving_without_losing_auth_or_migrations(
         assert db.scalar(select(func.count(Unit.id))) == units
         assert db.scalar(select(func.count(DeliveryReceipt.id))) == 0
         assert db.scalar(select(func.count(DeliveryReceiptItem.id))) == 0
+        assert db.scalar(select(func.count(IngredientDemandSetting.ingredient_id))) == 0
         assert db.scalar(select(func.count(AuditLog.id))) == 0
         assert db.scalar(select(func.count(InventoryTransaction.id))) == 8
         assert db.scalar(select(func.count(Supplier.id))) == 3
-        assert db.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0007_inventory_count_packages"
+        assert db.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == "0008_ingredient_demand_settings"
         korean = db.scalar(select(Ingredient).where(Ingredient.name == "Korean Noodles"))
         assert korean.unit.abbreviation == "pc"
         assert korean.count_units_per_package == Decimal("60")
