@@ -2,7 +2,7 @@
 
 ## Current phase
 
-**Phase 3 Step 1 — Editable ingredient demand configuration: complete, approved for commit**
+**Phase 3 Step 2 — Stock forecasting and availability calendar: complete, awaiting review**
 
 - **Step 1 (skeleton): ✅ COMPLETE** (commit `a9de3bc`)
 - **Step 2 (database models + migrations + seed): ✅ COMPLETE** (commit `c9e72ae`)
@@ -153,7 +153,7 @@
   history, and responsive layouts. Pytest emitted the existing Starlette/httpx
   deprecation warning. No commit, push, deployment, or production change.
 
-### Phase 3 Step 1 — Editable ingredient demand configuration (approved for commit)
+### Phase 3 Step 1 — Editable ingredient demand configuration (commit `a49d61a`)
 
 - Added optional per-ingredient `ingredient_demand_settings` rows with seven
   independent nullable weekday estimates, planning safety stock, enabled state,
@@ -200,6 +200,91 @@
   app CSS, browser suite; README, architecture, decisions, status, and handoff.
   No commit, push, deployment, projection engine, smart ordering, or Step 2 work.
 
+### Phase 3 Step 2 — Stock forecasting and availability calendar (uncommitted)
+
+- Added read-only, pinned-clock forecasting and authenticated
+  `GET /forecast/calendar?days=7|14|30&ingredient_id=...`. One batch returns
+  both scenarios, current ledger/cache validation, dated projections, original
+  outstanding order quantities and eligibility reasons, count confidence,
+  supplier cutoffs, and a conservative dashboard summary (D40).
+- Baseline (D41): a separate current-day preview starts at actual stock, deducts
+  today's full-day configured estimate as a conservative upper bound, and includes
+  eligible outstanding arrivals today. An optional forecast-only non-negative
+  override accepts zero after operations; missing remains unknown. Today's close
+  feeds tomorrow's opening. The dashboard uses the same default. Overrides are
+  temporary, ingredient/date scoped, and never save stock or demand settings.
+- Conservative uses eligible confirmed stock and partial remainders with matching
+  supplier-confirmation audit evidence. Partial receiving alone is insufficient;
+  expected additionally uses eligible unconfirmed orders. Accepted receiving
+  totals are subtracted from orders, rejected goods remain owed, and accepted
+  goods already in stock are never added twice. Draft/cancelled, delayed,
+  overdue, missing-date, cancelled-delivery, and out-of-range
+  supply is excluded without silently moving a date. Weekly schedule conflicts
+  are expected-only unless an extra-delivery exception permits them. Ordering
+  suspensions do not cancel existing placed shipments. See D40/D41 for exact rules.
+- Decimal projections carry negative cumulative unmet demand through future
+  days. Availability is Enough / Low / Depleted / Shortage / Unknown, independent
+  of physical-count confidence. Missing daily usage makes that day's closing
+  and all downstream balances unknown; zero remains valid. Disabled settings
+  are excluded. Ledger drift produces unknown projections without repairing data.
+- Arrival times remain unknown. Before-delivery balance deducts demand before
+  incoming; a negative result with eligible arrivals shows red shortage risk
+  independently of positive closing availability. Signed closing math is unchanged.
+- Count confidence reuses stored count/discrepancy facts and applies read-only
+  24/72-hour freshness caps (Settings-configurable); no inventory fields change.
+  As-of confidence applies to all projected days, with no invented future count.
+- Added Forecast Calendar with ingredient, horizon, and scenario selectors;
+  actual/projected separation, daily responsive cards, explicit timing/uncertainty
+  warnings, original order eligibility, and supplier cutoffs. Ingredient/scenario
+  changes reuse the loaded batch. Refresh/range reload it with stale-response
+  protection and network retry. Dashboard links open the selected ingredient.
+- Acceptance: Monday–Sunday closings **140, 100, 60, 20, 100, 40, -20 pc** for
+  180 pc starting stock, 40 pc weekdays, 60 pc weekends, safety 60 pc, and a
+  confirmed Friday 120 pc delivery. Without it, Friday closes at -20 pc. The
+  deterministic test uses a Sunday 2026-11-15 snapshot with explicit zero remaining
+  usage after operations. Friday has a red 20-pc pre-delivery shortage risk while
+  closing at 100 pc. The 100-current / 40-today / 40-tomorrow regression closes
+  tomorrow at 20; explicit zero remaining today instead closes tomorrow at 60.
+  All hypothetical records exist only in isolated tests.
+- Final targeted-correction verification: **273 backend passed** (384.02s,
+  one existing Starlette/httpx deprecation warning), **12 frontend passed**,
+  **54 Chrome browser integration passed**. Focused forecast regressions:
+  **59 passed** (75.23s). All databases are per-test temporary databases; no
+  development reset or reseed. Browser coverage includes explicit zero/reset,
+  unchanged demand/stock, red risk with a positive close, partial-receipt
+  uncertainty, both roles, network retry, and narrow responsive layouts.
+  Chrome screenshots: Windows temp `stockmate-browser-w4nw2t`; additional
+  desktop/mobile current-day and red-risk visual evidence:
+  `stockmate-browser-6qUaGT`. The risk badge is red (`rgb(220,38,38)`), with
+  zero horizontal overflow at 390px.
+  Static audit finds only the two existing external-handler false positives
+  for menu/logout; the real browser suite exercises both. DESIGN.md lint:
+  zero errors, four existing unused-token warnings. `git diff --check` is clean.
+- No migration: head stays `0008_ingredient_demand_settings`. Development
+  comparison backup:
+  `backend/backups/stockmate-before-forecast-20261112T013635357227Z.db`.
+  No development reset, seed, hypothetical order, or demand setting was applied.
+  Final comparison of all 18 tables (including Alembic revision) found no changed
+  rows, no foreign-key violations, and no ledger/cache mismatches. The demand
+  configuration table remains empty. This comparison was repeated after the
+  targeted corrections against the same exact local development database.
+- New files: `backend/app/services/forecast.py`, `backend/app/services/confidence.py`,
+  `backend/app/schemas/forecast.py`, `backend/app/api/v1/routes/forecast.py`,
+  `backend/tests/test_forecast.py`, `frontend/js/pages/forecast.js`, and
+  `frontend/tests/forecast.test.js`.
+- Modified files: `backend/app/config.py`, `backend/app/api/v1/router.py`,
+  `frontend/js/app.js`, `frontend/js/pages/dashboard.js`, `frontend/index.html`,
+  `frontend/css/app.css`, `frontend/tests/browser_smoke.mjs`, `README.md`,
+  `DESIGN.md`, `UX-CONTRACT.md`, and the four project documentation files.
+- Limitations: current snapshots only; the full-day remaining-usage default may
+  overestimate usage already accounted for, so staff can supply a temporary
+  estimate. No arrival-time data exists; the red warning represents possible
+  demand-before-delivery risk. Legacy partial shipments without matching evidence
+  are Expected-only. One ingredient's temporary override is held per page batch;
+  order dates are schema-required, with a defensive undated-input guard. No
+  automatic ordering, package rounding, new POs, notifications, or Step 3 work.
+  Changes remain uncommitted and unstaged pending review.
+
 Phase 0 was approved with three final requirements, now reflected in the docs:
 D15 (SQLite-safe concurrency: `BEGIN IMMEDIATE` + atomic conditional UPDATE +
 bounded retries, no `FOR UPDATE` dependency), D23 (all starting quantities —
@@ -214,7 +299,7 @@ junction row; service validates supplier `active` status).
 | 0 | Planning, architecture, docs (incl. review revision) | ✅ Done (commit `e53898d`) |
 | 1 | Inventory MVP: DB, auth, ingredients, **basic supplier CRUD + assignment**, dual stock entry, ledger, dashboard, confidence timestamps | 🔶 Steps 1–7 of 8 done |
 | 2 | Supplier schedule rules, delivery calendars, cutoff engine, purchase orders, delivery confirmation, supplier reminders (engine part), alternative-supplier ordering | 🔶 Steps 1–3 committed (`2a34b14`, `f08e48b`, `bfcb824`) |
-| 3 | Demand forecasting, forecast calendar, status colors, order suggestions, confidence indicators | 🔶 Step 1 demand configuration implemented; Step 2 not started |
+| 3 | Demand forecasting, forecast calendar, status colors, order suggestions, confidence indicators | 🔶 Step 1 committed (`a49d61a`); Step 2 implemented; Step 3 not started |
 | 4 | Scheduled reminders, in-app notifications, preferences, provider routing | ⬜ Not started |
 | 5 | Analytics, reports, CSV export, simple statistics | ⬜ Not started |
 | 6 | Deployment readiness: security, regression, backups | ⬜ Not started |

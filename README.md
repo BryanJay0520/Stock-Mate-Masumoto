@@ -3,13 +3,13 @@
 Smart restaurant inventory management and supply planning system.
 Web-based, mobile-ready, designed initially for a ramen restaurant.
 
-🚧 **Work in Progress — Phase 3 Step 1 demand settings implemented; stock projections pending**
+🚧 **Work in Progress — Phase 3 Step 2 forecasting and availability calendar implemented**
 
 The responsive web UI includes login, dashboard, inventory, package-aware
 daily stock entry, supplier and ingredient management, purchase orders and
 delivery receiving, transaction history with corrections, and account
-settings, including editable ingredient demand estimates. Stock projections,
-smart ordering, and notifications arrive in later steps.
+settings, editable ingredient demand estimates, and a read-only Forecast Calendar.
+Smart ordering and notifications arrive in later steps.
 
 ## What it does (planned)
 
@@ -151,8 +151,47 @@ For Korean Noodles, 40 pc on each weekday and 60 pc on Saturday/Sunday gives
 320 pc per week; a 60 pc planning buffer is separate. These values are editable
 and are demonstrated only in isolated tests, not automatically saved to the
 development database. The existing Box × 60 counting configuration is reused.
-This step stores planning inputs only; future stock projections and ordering
-recommendations are not implemented yet.
+The Forecast Calendar uses these inputs; ordering recommendations remain a later step.
+
+## Forecast Calendar
+
+Open **Forecast Calendar** and select an ingredient, 7/14/30 days, and a scenario.
+Actual stock is shown separately from projected daily openings/closings. The
+dashboard summarizes conservative shortages, low stock, stale counts, uncertain
+supply dependencies, and missing settings, with links to individual ingredients.
+
+The separate **Today — current-day preview** starts from actual stock at the
+displayed timestamp. **Today's Remaining Usage** defaults to today's configured
+full-day estimate as a conservative upper bound. Enter an optional non-negative
+forecast-only override, including **0** after operations; blank restores the
+default. Missing estimates remain unknown. Overrides are temporary, scoped to
+one ingredient/business date, and never save demand settings or alter stock.
+The dashboard uses the same full-day default. Today's projected close, including
+eligible outstanding arrivals due today, becomes tomorrow's opening. Refresh
+after recording actual usage, receipts, or a physical count.
+Each future day subtracts that weekday's configured usage once. Negative projections
+carry cumulative unmet demand forward; unknown usage makes downstream balances
+unknown. Explicit zero is valid. Planning safety stock is the configured buffer.
+
+**Conservative** uses eligible confirmed orders and partially delivered orders
+whose remainder retains matching supplier-confirmation audit evidence. A partial
+receipt alone establishes no confirmation. **Expected** also includes eligible
+unconfirmed remainders/orders. Neither scenario
+uses drafts, cancellations, accepted quantities already in stock, delayed or
+overdue arrivals, or dates invented for missing delivery information. Supplier
+delivery cancellations exclude shipments; weekly schedule conflicts are flagged
+and expected-only. The view lists original outstanding quantities and exclusions.
+It never reschedules an order. Arrival times are unknown. The before-delivery
+balance deducts demand before incoming; a negative result displays a **red
+pre-delivery shortage risk**, even if closing is positive. Closing remains
+opening + eligible incoming − demand. For example, 20 opening − 40 usage gives
+a possible 20-pc shortage before a 120-pc delivery, then a 100-pc closing balance.
+
+Count confidence is separate from availability and is capped by count age
+(24/72 hours by default). These read-only freshness thresholds use
+`STOCKMATE_COUNT_HIGH_FRESHNESS_HOURS` and `STOCKMATE_COUNT_MEDIUM_FRESHNESS_HOURS`.
+Forecast views do not change stock, write ledger entries, create purchase orders,
+or recommend purchase quantities. No migration beyond 0008 is needed.
 
 ## Authentication (added Step 3)
 

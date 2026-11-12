@@ -242,6 +242,24 @@
 .demand-shortcut .field { margin-bottom: var(--space-2); }
 .demand-notes { resize: none; min-height: 96px; }
 
+.forecast-summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--space-4); margin: var(--space-4) 0; }
+.forecast-summary-grid dt { color: var(--color-text-muted); font-size: var(--font-size-sm); }
+.forecast-summary-grid dd { margin: var(--space-1) 0 0; font-weight: 600; }
+.forecast-issues { padding-left: var(--space-5); margin: var(--space-4) 0; }
+.forecast-issues li { margin-bottom: var(--space-2); }
+.forecast-explanation summary { cursor: pointer; padding: var(--space-2) 0; }
+.forecast-delivery { padding: var(--space-3) 0; border-bottom: 1px solid var(--color-border); }
+#forecast-calendar td { vertical-align: top; }
+.forecast-arrivals { min-width: 0; }
+.forecast-arrivals strong { white-space: nowrap; }
+.forecast-today-controls { margin-bottom: var(--space-4); padding: var(--space-4); background: var(--color-bg); border-radius: var(--radius-control); }
+.forecast-today-controls .field { max-width: 480px; }
+.forecast-risk-details .badge { white-space: normal; margin-bottom: var(--space-2); }
+.forecast-risk-details span { overflow-wrap: anywhere; }
+@media (max-width: 720px) {
+  .forecast-arrivals { text-align: right; }
+}
+
 .input,
 .select,
 .textarea {

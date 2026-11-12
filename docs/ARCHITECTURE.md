@@ -465,47 +465,111 @@ with their own values — nothing is inferred from the Monday rule.
 
 ### 5.4 Forecast & the four stock numbers (Phase 3)
 
+**Step 2 implementation (D40, corrected by D41):** `app/services/forecast.py` supplies the
+authenticated, read-only `GET /api/v1/forecast/calendar` API. `days` accepts
+7/14/30; optional `ingredient_id` restricts the response to one active ingredient.
+Without that filter one batch contains all active ingredients, both scenarios,
+supplier cutoff information, and a dashboard summary. All quantity fields are
+decimal strings. No schema migration or persistent forecast table is required;
+head remains `0008_ingredient_demand_settings`.
+
+The service accepts an injected current clock for tests; HTTP clients cannot
+request historical forecasts using today's balances. It verifies ledger sums
+against cached states before projecting, uses a consistent read transaction,
+and never calls ledger repair, inventory mutation, or order mutation services.
+The response includes UTC and business-local as-of timestamps, the business
+date, projection start/end dates, and explicit baseline/delivery assumptions.
+
+The response separates `scenario.today` from 7/14/30 future `scenario.days`.
+Today's opening is actual stock at the as-of instant; remaining usage defaults
+to today's full-day estimate as a conservative upper bound. An optional decimal
+`today_remaining_usage` override accepts zero, scoped by `ingredient_id` or
+`today_usage_ingredient_id` for a batch. The UI supplies `today_usage_date`;
+the server rejects a stale date with 409 `today_override_expired`. Blank/absent
+uses the default; a missing estimate remains unknown. No elapsed-hours usage is
+inferred, and no transactions are interpreted as demand. Today's eligible
+outstanding arrivals are included; today's projected close feeds tomorrow's
+opening. The dashboard uses this same default policy. Overrides are not stored.
+
 The system keeps four distinct numbers per ingredient, never conflated:
 
 | Number | Definition |
 |---|---|
 | **Actual stock** | `ingredient_stock_state.current_quantity` — physically available, from confirmed receipts, consumption, reconciliations |
 | **Ordered (unconfirmed) incoming** | Quantity on POs in `ordered` status — expected but not supplier-confirmed; shown as uncertain |
-| **Confirmed incoming** | Quantity on POs in `confirmed` / `partially_delivered` status — treated as reliable supply in projections |
+| **Confirmed incoming** | Eligible confirmed POs, plus partial remainders with matching supplier-confirmation audit evidence (D41) |
 | **Projected stock** | Day-by-day estimate: actual + reliable arrivals − forecast consumption |
 
 Draft POs are **never** supply (D9). Unconfirmed ordered quantities are
 displayed separately and excluded from the conservative projection (or shown
 as an optimistic range, labeled).
 
-**Intraday delivery timing (D21):** an expected delivery becomes available
-**on its delivery date, from the start of the business day** — i.e., it can
-cover that day's demand. This is the pragmatic default for restaurants
-(morning deliveries). An admin setting `delivery_availability`
-(`same_day`|`next_day`) allows switching to the conservative rule where
-arrivals only count from the following business day.
+**Intraday delivery timing (D41 supersedes the original D21 timing assumption):**
+arrival times are unknown. Closing includes eligible deliveries on their date,
+while a separate before-delivery balance deducts demand first. Negative
+before-delivery stock with eligible incoming produces a red shortage-risk badge,
+even if the closing-stock status is Enough. No arrival time or timing setting
+is invented.
 
 **Projection walk** (per ingredient, server-side):
 
-```
-dailyUse(ingredient, d) = ingredientDateOverride[d] ?? ingredientWeekdayEstimate[weekday(d)]
+Step 2 uses configured weekday estimates for future dates. Today's temporary
+remaining-usage override is independent of permanent demand settings; future
+date overrides are not implemented.
 
-for each business day d in horizon (7/14/30):
-  incoming(d) = Σ confirmed PO items with expected_delivery_date = d
+```
+dailyUse(d) = today's explicit remaining usage if supplied (including zero)
+              otherwise ingredientWeekdayEstimate[weekday(d)]
+
+for today, then each future business date in horizon (7/14/30):
+  incoming(d) = Σ scenario-eligible outstanding PO items with expected_delivery_date = d
   opening     = previous closing (starts from actual stock)
+  beforeDelivery = opening − dailyUse(d)
+  preDeliveryRisk = incoming(d) > 0 and beforeDelivery < 0
   closing     = opening + incoming(d) − dailyUse(d)
-  status      = gray   if inputs missing (see below)
-                red    if closing < 0 or below critical threshold before
-                       the next reliable delivery
-                yellow if closing < min_safety_stock
-                green  otherwise
+  status      = unknown  if required inputs are missing
+                shortage if closing < 0
+                depleted if closing == 0
+                low      if 0 < closing < demand.safety_stock
+                enough   otherwise (positive and >= demand.safety_stock)
 ```
 
 **Future missing-input behavior (D39):** disabled configurations are excluded.
-Absent or incomplete enabled demand inputs and no recent count must be
-handled explicitly as incomplete, never as zero. That ingredient's affected dates
-are **GRAY ("incomplete data")**, never silently green. The overall calendar
-date status = worst status across active ingredients.
+Missing weekday consumption is not zero: the first missing day and all following
+balances become null/Unknown, even if a later delivery is known. A prefix may
+remain calculable when its estimates and planning safety are available. A missing
+safety buffer or absent/disabled settings leave projections unknown. Explicit
+zero remains valid. Count freshness is a separate confidence indicator; stale
+counts warn without changing valid arithmetic. Negative balances carry unmet
+demand into subsequent days until projected supply covers the backlog.
+
+**Delivery scenarios and eligibility:** conservative uses eligible confirmed
+orders and partial remainders with matching supplier-confirmation audit evidence;
+expected additionally uses eligible unconfirmed orders/remainders. Partial status
+alone is insufficient. The read-only evidence scan matches supplier, delivery
+date, ingredient, and ordered quantity; invalidating transitions discard old
+confirmation (D41). Outstanding uses accepted
+received quantities only, preserving rejected replacements as owed. Drafts,
+cancelled and fully received orders never add supply. Delayed, overdue,
+missing-date, supplier-cancelled, and out-of-range
+arrivals are excluded without moving their dates, and are exposed separately.
+The current order schema requires a date; an explicit defensive guard also
+rejects undated legacy/malformed inputs without inventing a date.
+
+Applicable weekly schedule conflicts are expected-only; extra-delivery
+exceptions permit their dates. Ordering suspensions do not cancel already
+placed deliveries. Supplier delivery cancellations exclude them from both
+scenarios. Cutoff changes remain scheduling information and never alter a PO.
+Each supplier's opportunity calendar is computed once per batch and filtered
+to the ingredient's general/additive rules, including alternative suppliers.
+Accepted goods already in actual stock are never added to incoming twice.
+
+Eligible due-today deliveries participate in today's preview. Accepted quantities
+already in actual stock are excluded from outstanding incoming. Each daily
+response includes `pre_delivery_balance`, `pre_delivery_shortage`, and
+`pre_delivery_shortage_risk`, beside the signed closing balance and its status.
+Scheduled quantities remain projected until actual receiving. Summary risk dates
+include the separate current-day preview and future dates.
 
 **Two independent indicators:** every forecast card shows **Supply risk**
 (green/yellow/red/gray, from the walk above) and **Data confidence**
@@ -520,6 +584,14 @@ and already-confirmed incoming; round up to `package_size`, respect
 never auto-submits.
 
 ### 5.5 Stock Confidence Indicator
+
+Step 2 uses `services/confidence.py` as a read-only view of the existing count
+timestamp, stored confidence, and discrepancy flag. Freshness caps are Settings
+fields `count_high_freshness_hours` and `count_medium_freshness_hours` (defaults
+24/72, positive and ordered). No `confidence_config` table or new admin screen
+is introduced. The stored level is never upgraded by this read. Future count
+timestamps, missing counts, and discrepancy flags produce Low confidence.
+All projected days carry this as-of confidence; no future count is assumed.
 
 Derived from ledger facts, per ingredient, against `confidence_config`
 thresholds (D10):

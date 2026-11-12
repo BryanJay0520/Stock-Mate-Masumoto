@@ -6,6 +6,7 @@ from app.api.v1.routes import (
     admin_users,
     auth,
     demand,
+    forecast,
     health,
     ingredients,
     inventory,
@@ -24,6 +25,7 @@ api_router.include_router(inventory.router, tags=["inventory"])
 api_router.include_router(suppliers.router, tags=["suppliers"])
 api_router.include_router(ingredients.router, tags=["ingredients"])
 api_router.include_router(demand.router, tags=["demand settings"])
+api_router.include_router(forecast.router, tags=["forecast"])
 api_router.include_router(schedules.router, tags=["schedules"])
 api_router.include_router(orders.router, tags=["orders"])
 api_router.include_router(receiving.router, tags=["receiving"])

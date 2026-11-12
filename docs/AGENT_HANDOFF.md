@@ -5,7 +5,7 @@
 
 ## Where the project is
 
-- **Current phase:** Phase 3 Step 1 — editable ingredient demand configuration.
+- **Current phase:** Phase 3 Step 2 — stock forecasting and availability calendar.
 - **Progress:** Phase 1 complete (through `a67d07e`). Phase 2 Step 1
   (`2a34b14`) and Step 2 (`f08e48b`) committed. Phase 2 Step 3 (delivery
   receiving & stock integration) is **implemented; Codex reconciliation
@@ -13,13 +13,23 @@
   Committed as `bfcb824` on 2026-11-12. The subsequent approved counting
   enhancement and guarded fictional development data reset are documented in
   `PROJECT_STATUS.md` and committed as `dd67047`. Step 1 demand configuration
-  is implemented and approved for commit; projection calculations have NOT started.
+  is committed as `a49d61a`. Step 2 read-only forecasting and its calendar are
+  implemented and uncommitted; automatic ordering has NOT started.
   The demo database has
   Korean Noodles in `pc` with 60 pieces per Box and 180 pieces opening stock.
 - Phase 3 Step 1 verification: 214 backend, 8 frontend, and 45 real-browser
   tests passed. Migration 0008 adds an empty demand settings table; the checked
   development upgrade preserved all existing rows in 16 tables. Demand example
   values were saved only in isolated tests. See D39 and PROJECT_STATUS.md.
+- Step 2 final verification after targeted D41 corrections: **273 backend**,
+  **12 frontend**, **54 real Chrome browser tests passed**, with 59 focused
+  forecast regressions passing. No new migration (head 0008). Forecasts use a
+  separate current-day preview feeding future dates, with conservative/expected
+  scenarios, red pre-delivery risk, and audit-based partial-shipment confidence.
+  All 18 development tables still match the pre-forecast backup; ledger and
+  foreign keys reconcile. See D40/D41 and the
+  implementation/file inventory in PROJECT_STATUS.md. Do not reset development
+  data or seed hypothetical forecast orders into it.
 - Development happens **incrementally, one step at a time** — never implement
   multiple steps without explicit user approval.
 
@@ -43,7 +53,7 @@
 ## Read these before doing anything
 
 1. `docs/ARCHITECTURE.md` — full architecture, database schema, business logic.
-2. `docs/DECISIONS.md` — binding decisions D1–D39. Supersede, never silently
+2. `docs/DECISIONS.md` — binding decisions D1–D40. Supersede, never silently
    change. (Renumbered during the Phase 0 revision — cite current text.)
 3. `docs/PROJECT_STATUS.md` — roadmap + the ordered Phase 1 checklist with
    per-step status.
@@ -415,16 +425,20 @@
 
 ## Pending decisions (waiting on user)
 
-- Separate approval for Phase 3 Step 2. Do not automatically push, deploy,
-  or start projections.
+- Approval to commit Phase 3 Step 2 after review, then separate approval for
+  Step 3. Do not automatically commit, push, deploy, or start smart ordering.
 
 ## Recommended next task
 
-Review Phase 3 Step 1 results in PROJECT_STATUS.md. Demand settings use the
-ingredient's own stock units (D39), not the earlier global serving default.
-Missing weekdays are null, disabled/incomplete settings are not forecast-ready,
-and saved revisions reject stale writes. Development migration head is 0008;
-its new configuration table starts empty. Do not reset the development database.
+Review Step 2's results and assumptions in PROJECT_STATUS.md and D40/D41. Forecast
+reads validate ledger/cache consistency, reuse D39 daily demand, never write
+stock/orders, and expose excluded supply separately. Missing consumption poisons
+downstream balances rather than inventing zero. No historical as-of query or
+persisted usage override is supported. Today's separate preview defaults to the
+configured full-day upper bound, permits a temporary zero override, and feeds
+tomorrow. Red pre-delivery risk is independent of closing availability. Partial
+remainders need matching confirmation audits for conservative eligibility.
+Migration head stays 0008. Stop for review; Step 3 is not authorized.
 
 ## Git
 

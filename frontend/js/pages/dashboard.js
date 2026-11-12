@@ -7,6 +7,8 @@ SM.pages = SM.pages || {};
 SM.pages.dashboard = {
   async render(view) {
     const ui = SM.ui;
+    const forecastTask = SM.api.get("/forecast/calendar?days=7")
+      .then(data => ({data}), error => ({error}));
     const { rows, ingredients, suppliers } = await SM.data.catalog();
     const transactions = await SM.api.get("/inventory/transactions?limit=8");
     const deliveries = await SM.api.get(
@@ -34,6 +36,11 @@ SM.pages.dashboard = {
       ui.el("a", { class: "btn", href: "#/entry", text: "Record Stock" }),
       ui.el("a", { class: "btn btn--secondary", href: "#/inventory", text: "View Inventory" }),
     ));
+
+    const forecast = await forecastTask;
+    view.append(forecast.data ? SM.forecastUI.summaryCard(forecast.data) : ui.el("div", {class: "card"},
+      ui.el("h2", {class: "card__title", text: "Forecast outlook"}), ui.alert(forecast.error.message),
+      ui.el("a", {href: "#/forecast", text: "Open Forecast Calendar to retry →"})));
 
     // Upcoming deliveries — ordered but not yet received (Phase 2 Step 2).
     const deliveriesCard = ui.el("div", { class: "card" },

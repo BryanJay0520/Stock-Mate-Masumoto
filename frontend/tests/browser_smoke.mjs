@@ -38,6 +38,7 @@ let chromeStderr = "";
 let ws;
 let nextId = 1;
 const pending = new Map();
+let forecastRequests = 0;
 
 // --- Tiny CDP client --------------------------------------------------------
 
@@ -188,6 +189,7 @@ async function boot() {
   });
   ws.onmessage = (event) => {
     const msg = JSON.parse(event.data);
+    if (msg.method === "Network.requestWillBeSent" && msg.params.request.url.includes("/api/v1/forecast/calendar")) forecastRequests++;
     if (msg.id && pending.has(msg.id)) {
       const { resolve, reject } = pending.get(msg.id);
       pending.delete(msg.id);
@@ -1010,6 +1012,149 @@ async function demandTests() {
   });
 }
 
+async function forecastTests() {
+  let beforeStock, beforeHistory, beforeOrders, korean, incomingDate, forecastOrderId;
+  await test("forecast calendar distinguishes today's upper-bound preview from future dates", async () => {
+    beforeStock = await apiAsSession("/inventory/stock");
+    korean = beforeStock.find(row => row.ingredient_name === "Korean Noodles");
+    await navigate(`/forecast?ingredient_id=${korean.ingredient_id}`);
+    await waitFor(`document.querySelectorAll("#forecast-calendar tbody tr").length === 7`);
+    await assertText("#forecast-content", "Future forecast dates");
+    await assertText("#forecast-content", "Actual available stock now");
+    await assertText("#forecast-today-preview", "conservative upper bound");
+    const data = await apiAsSession(`/forecast/calendar?days=7&ingredient_id=${korean.ingredient_id}`);
+    assert(data.ingredients[0].actual_available === korean.current_quantity, "forecast changed the stock baseline");
+    await assertText("#forecast-calendar tbody tr:first-child", SMQuantity(data.ingredients[0].conservative.days[0].closing_balance));
+    await screenshot("forecast-calendar-desktop");
+  });
+
+  await test("today's remaining usage accepts explicit zero and resets without saving demand or stock", async () => {
+    const demandBefore = await apiAsSession(`/ingredients/${korean.ingredient_id}/demand-settings`);
+    const stockBefore = await apiAsSession("/inventory/stock");
+    const defaults = (await apiAsSession(`/forecast/calendar?ingredient_id=${korean.ingredient_id}`)).ingredients[0];
+    await evaluate(`document.getElementById("forecast-today-usage").value = "-1"`);
+    await evaluate(`[...document.querySelectorAll("#view button")].find(b => b.textContent === "Apply remaining usage").click()`);
+    await waitFor(`document.getElementById("forecast-today-usage").getAttribute("aria-invalid") === "true"`);
+    await evaluate(`document.getElementById("forecast-today-usage").value = "0"`);
+    await evaluate(`[...document.querySelectorAll("#view button")].find(b => b.textContent === "Apply remaining usage").click()`);
+    await waitFor(`document.getElementById("forecast-today-preview")?.textContent.includes("explicit forecast-only")`);
+    assert(await evaluate(`document.getElementById("forecast-today-usage").value === "0"`), "zero was discarded");
+    const zero = (await apiAsSession(`/forecast/calendar?ingredient_id=${korean.ingredient_id}&today_remaining_usage=0`)).ingredients[0];
+    assert(zero.conservative.today.closing_balance !== defaults.conservative.today.closing_balance, "zero did not change today's forecast");
+    assert(zero.conservative.days[0].opening_balance === zero.conservative.today.closing_balance, "today did not feed tomorrow");
+    await assertText("#forecast-calendar tbody tr:first-child", `${SMQuantity(zero.conservative.days[0].closing_balance)} pc`);
+    await evaluate(`[...document.querySelectorAll("#view button")].find(b => b.textContent === "Use configured full-day estimate").click()`);
+    await waitFor(`document.getElementById("forecast-today-preview")?.textContent.includes("conservative upper bound")`);
+    assert(await evaluate(`document.getElementById("forecast-today-usage").value === ""`), "blank default was replaced with zero");
+    assert(JSON.stringify(await apiAsSession(`/ingredients/${korean.ingredient_id}/demand-settings`)) === JSON.stringify(demandBefore), "override saved permanent demand");
+    assert(JSON.stringify(await apiAsSession("/inventory/stock")) === JSON.stringify(stockBefore), "override changed stock");
+  });
+
+  await test("forecast scenarios distinguish uncertain orders without repeated calculations", async () => {
+    const data = await apiAsSession(`/forecast/calendar?days=7&ingredient_id=${korean.ingredient_id}`);
+    const ingredient = (await apiAsSession("/ingredients")).find(row => row.id === korean.ingredient_id);
+    const cutoff = data.ingredients[0].upcoming_cutoffs.find(row => row.supplier_id === ingredient.primary_supplier_id && row.delivery_date <= data.end_date);
+    assert(cutoff, "test needs an applicable upcoming primary supplier delivery");
+    incomingDate = cutoff.delivery_date;
+    const order = await evaluate(`SM.api.post("/purchase-orders", {
+      supplier_id: ${ingredient.primary_supplier_id}, expected_delivery_date: ${JSON.stringify(incomingDate)},
+      notes: "Isolated browser forecast example", items: [{ingredient_id: ${korean.ingredient_id}, quantity_ordered: "240"}]
+    })`);
+    forecastOrderId = order.id;
+    await evaluate(`SM.api.post("/purchase-orders/${order.id}/mark-ordered")`);
+    beforeStock = await apiAsSession("/inventory/stock");
+    beforeHistory = await apiAsSession("/inventory/transactions?limit=200");
+    beforeOrders = await apiAsSession("/purchase-orders?limit=200");
+    await evaluate(`[...document.querySelectorAll("#view button")].find(b => b.textContent === "Refresh forecast").click()`);
+    await waitFor(`document.getElementById("forecast-content").textContent.includes("Order #${order.id}")`);
+    const forecastData = await apiAsSession(`/forecast/calendar?days=7&ingredient_id=${korean.ingredient_id}`);
+    const expectedDay = forecastData.ingredients[0].expected.days.find(day => day.date === incomingDate);
+    const calls = forecastRequests;
+    await evaluate(`(() => { const select = document.getElementById("forecast-scenario"); select.value = "expected"; select.dispatchEvent(new Event("change", {bubbles:true})); })()`);
+    await assertText("#forecast-content", "Expected projection");
+    await assertText("#forecast-content", "not supplier-confirmed");
+    await assertText(`#forecast-calendar tr[data-date="${incomingDate}"]`, `${SMQuantity(expectedDay.eligible_incoming)} pc`);
+    assert(expectedDay.pre_delivery_shortage_risk && Number(expectedDay.closing_balance) > 0, "fixture must cover a shortage before a positive delivery-day close");
+    await assertText(`#forecast-calendar tr[data-date="${incomingDate}"] .badge--critical`, "Pre-delivery shortage risk");
+    await screenshot("forecast-pre-delivery-risk");
+    await evaluate(`(() => { const select = document.getElementById("forecast-scenario"); select.value = "conservative"; select.dispatchEvent(new Event("change", {bubbles:true})); })()`);
+    await assertText("#forecast-content", "Conservative projection");
+    assert(forecastRequests === calls, "scenario switches recalculated the batch");
+  });
+
+  await test("a partial receipt does not confirm the outstanding shipment in the forecast", async () => {
+    await evaluate(`SM.api.post("/purchase-orders/${forecastOrderId}/receive", {
+      received_by_staff_name: "Isolated Forecast Check", idempotency_key: "browser-forecast-partial",
+      lines: [{ingredient_id: ${korean.ingredient_id}, quantity: "10", quantity_rejected: "0"}]
+    })`);
+    await evaluate(`[...document.querySelectorAll("#view button")].find(b => b.textContent === "Refresh forecast").click()`);
+    await waitFor(`document.getElementById("forecast-content").textContent.includes("Confirmation of the outstanding remainder is not established")`);
+    const item = (await apiAsSession(`/forecast/calendar?ingredient_id=${korean.ingredient_id}`)).ingredients[0];
+    const delivery = item.incoming.find(row => row.order_id === forecastOrderId);
+    assert(delivery.status === "partially_delivered" && delivery.outstanding_quantity === "230.000", "partial receipt quantity was wrong");
+    assert(!delivery.conservative_eligible && delivery.expected_eligible && delivery.uncertain, "partial receipt was mistaken for supplier confirmation");
+    beforeStock = await apiAsSession("/inventory/stock");
+    beforeHistory = await apiAsSession("/inventory/transactions?limit=200");
+    beforeOrders = await apiAsSession("/purchase-orders?limit=200");
+  });
+
+  await test("forecast ranges load 14 and 30 days and ingredient switching reuses the batch", async () => {
+    for (const days of [14, 30]) {
+      await evaluate(`(() => { const select = document.getElementById("forecast-days"); select.value = "${days}"; select.dispatchEvent(new Event("change", {bubbles:true})); })()`);
+      await waitFor(`document.querySelectorAll("#forecast-calendar tbody tr").length === ${days}`);
+    }
+    const calls = forecastRequests;
+    await evaluate(`(() => { const select = document.getElementById("forecast-ingredient"); select.value = [...select.options].find(o => o.text.includes("Nori")).value; select.dispatchEvent(new Event("change", {bubbles:true})); })()`);
+    await assertText("#forecast-content", "Demand configuration: missing");
+    await assertText("#forecast-calendar tbody tr:first-child", "Unknown");
+    assert(forecastRequests === calls, "ingredient switching recalculated the batch");
+  });
+
+  await test("forecast refresh handles network failure and keeps selections for retry", async () => {
+    const selected = await evaluate(`document.getElementById("forecast-ingredient").value`);
+    try {
+      await send("Network.emulateNetworkConditions", {offline:true, latency:0, downloadThroughput:-1, uploadThroughput:-1});
+      await evaluate(`[...document.querySelectorAll("#view button")].find(b => b.textContent === "Refresh forecast").click()`);
+      await waitFor(`document.querySelector("#view .alert--error")?.textContent.includes("Could not reach")`);
+    } finally {
+      await send("Network.emulateNetworkConditions", {offline:false, latency:0, downloadThroughput:-1, uploadThroughput:-1});
+    }
+    assert(await evaluate(`document.getElementById("forecast-ingredient").value === ${JSON.stringify(selected)}`), "selection was lost");
+    await evaluate(`[...document.querySelectorAll("#view button")].find(b => b.textContent === "Refresh forecast").click()`);
+    await waitFor(`document.querySelectorAll("#forecast-calendar tbody tr").length === 30`);
+  });
+
+  await test("forecast calendar remains usable on a phone with native selectors", async () => {
+    await setViewport(390);
+    await evaluate(`(() => { const select = document.getElementById("forecast-ingredient"); select.value = "${korean.ingredient_id}"; select.dispatchEvent(new Event("change", {bubbles:true})); })()`);
+    assert(await evaluate(`document.documentElement.scrollWidth - innerWidth <= 1`), "forecast page overflows phone width");
+    await screenshot("forecast-calendar-390");
+    await evaluate(`document.querySelector("#forecast-calendar").scrollIntoView({block:"start"})`);
+    await screenshot("forecast-calendar-390-days");
+    await send("Input.dispatchKeyEvent", {type:"keyDown", key:"Tab", code:"Tab", windowsVirtualKeyCode:9});
+    await send("Input.dispatchKeyEvent", {type:"keyUp", key:"Tab", code:"Tab", windowsVirtualKeyCode:9});
+    await setViewport(1440);
+  });
+
+  await test("dashboard forecast summary links to the selected ingredient and views never write stock", async () => {
+    await navigate("/dashboard");
+    await waitFor(`document.getElementById("forecast-summary")`);
+    await assertText("#forecast-summary", "Projected to run out");
+    await assertText("#forecast-summary", "Missing or incomplete demand");
+    await assertText("#forecast-summary", "full-day estimate as a conservative upper bound");
+    await evaluate(`(() => { const link = [...document.querySelectorAll("#forecast-summary a")].find(a => a.textContent === "Korean Noodles"); link.click(); })()`);
+    await waitFor(`document.querySelectorAll("#forecast-calendar tbody tr").length === 7`);
+    assert(await evaluate(`document.getElementById("forecast-ingredient").value === "${korean.ingredient_id}"`), "summary linked to a different ingredient");
+    assert(JSON.stringify(await apiAsSession("/inventory/stock")) === JSON.stringify(beforeStock), "forecast viewing changed stock");
+    assert(JSON.stringify(await apiAsSession("/inventory/transactions?limit=200")) === JSON.stringify(beforeHistory), "forecast viewing wrote ledger rows");
+    assert(JSON.stringify(await apiAsSession("/purchase-orders?limit=200")) === JSON.stringify(beforeOrders), "forecast viewing changed orders");
+  });
+}
+
+function SMQuantity(value) {
+  return value === null ? "Unknown" : String(value).replace(/\.0+$/, "");
+}
+
 async function correctionTests() {
   await test("correction is blocked after a newer physical count (D27 warning)", async () => {
     await navigate("/history");
@@ -1140,6 +1285,13 @@ async function staffTests() {
     await evaluate(`document.dispatchEvent(new KeyboardEvent("keydown", {key:"Escape"}))`);
   });
 
+  await test("staff can view the read-only Forecast Calendar", async () => {
+    await navigate("/forecast");
+    await waitFor(`document.querySelectorAll("#forecast-calendar tbody tr").length === 7`);
+    await assertText("#forecast-content", "Actual available stock now");
+    assert(!(await evaluate(`document.querySelector("#view").textContent.includes("Save Forecast Settings")`)), "forecast view exposes editing");
+  });
+
   await test("cleared session redirects protected pages to login", async () => {
     await openDemand();
     await send("Network.clearBrowserCookies");
@@ -1162,6 +1314,7 @@ try {
   await receivingTests();
   await packageCountingTests();
   await demandTests();
+  await forecastTests();
   await ingredientTests();
   await correctionTests();
   await responsiveTests();

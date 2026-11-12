@@ -8,6 +8,7 @@ SM.app = {
   routes: {
     dashboard: { title: "Dashboard", label: "Dashboard" },
     inventory: { title: "Inventory", label: "Inventory" },
+    forecast: { title: "Forecast Calendar", label: "Forecast Calendar" },
     entry: { title: "Daily Stock Entry", label: "Daily Stock Entry" },
     suppliers: { title: "Suppliers", label: "Suppliers" },
     orders: { title: "Purchase Orders", label: "Purchase Orders" },
@@ -92,7 +93,7 @@ SM.app = {
     }
     if (!this.shellReady) this.renderShell();
 
-    const key = location.hash.replace(/^#\//, "") || this.defaultRoute;
+    const key = location.hash.replace(/^#\//, "").split("?")[0] || this.defaultRoute;
     const routeKey = this.routes[key] ? key : this.defaultRoute;
     const route = this.routes[routeKey];
     const page = SM.pages[routeKey];

@@ -67,6 +67,16 @@ Follow `frontend/css/app.css`: cards, form grids, responsive tables below 720px,
 and sidebar collapse below 900px. Forecast settings reuse the wide modal. The
 seven-day grid flows into narrow columns; the weekly total remains a distinct
 preview below the inputs. The document and modal retain visible native scrollbars.
+Forecast Calendar follows the existing table-to-card pattern rather than adding
+charts. Keep the actual-stock and assumption card above dated projected values;
+arrival totals and their uncertainty explanations form one responsive cell.
+Place forecast-only Today's Remaining Usage controls beside the selectors and
+a distinct current-day preview before future dates. Label the full-day default
+as an upper bound and distinguish blank from explicit zero. Use the existing
+critical red badge for pre-delivery shortage risk, independently of a positive
+closing-stock badge; keep both labels readable on mobile cards.
+The dashboard uses a concise forecast summary with ingredient links and keeps
+its existing four actual-inventory stat cards.
 
 ## Elevation & Depth
 

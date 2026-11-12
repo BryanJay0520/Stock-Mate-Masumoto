@@ -393,3 +393,96 @@ stock state, ledger, counting packages, purchasing packages, or orders. No
 demand values are seeded automatically. Date overrides, stock projections,
 shortage calculations, cutoff integration, and smart ordering remain future
 steps; purchasing rounding must continue to use supplier package sizes (D38).
+
+## D40 — Read-only forecast snapshots, explicit timing, and separate scenarios
+
+The original current-day, delivery-timing, and partial-confirmation policies below
+are superseded by D41. Other snapshot, ledger, scheduling, and confidence rules
+remain in force.
+
+Step 2 adds no persistent balance or schema. Forecasts read the existing
+ledger/cache verification, count facts, ingredient demand, accepted receipt
+totals on order lines, and supplier schedules in one request transaction.
+Ledger drift or a snapshot newer than the injected as-of clock produces unknown
+projections, never an automatic repair. This is a current snapshot API, not a
+historical reconstruction API.
+
+The baseline is the next business day after the as-of timestamp, using the
+configured business timezone (default Asia/Tokyo) and day boundary. Today's
+remaining usage and unreceived deliveries are excluded explicitly. No full-day
+usage is deducted again from today's recorded stock, no hourly usage is inferred,
+and physical-count adjustments are never interpreted as consumption.
+
+Daily closing = prior closing + eligible arrivals − configured weekday usage.
+Eligible arrivals precede modeled consumption; if the opening projection cannot
+cover that day's usage without the arrival, display an arrival-time warning.
+Negative projections carry cumulative unmet demand; they are not clamped.
+Statuses: positive and at/above planning safety = Enough; positive below it =
+Low; zero = Depleted; negative = Shortage; missing required inputs = Unknown.
+This refines D39: an incomplete configuration may show a known prefix when
+safety and those daily estimates exist, but its first missing day and every
+downstream closing remain unknown. Explicit zero is valid. Disabled settings
+are excluded, and no future stock values are persisted.
+
+Conservative includes only eligible confirmed/partially delivered outstanding
+quantities. Expected additionally includes eligible ordered-but-unconfirmed
+quantities. Pending = ordered − accepted received; rejected goods remain owed.
+Draft/cancelled orders are not committed supply. Fully accepted quantities are
+already in stock and never added twice. Both scenarios exclude delayed, overdue,
+due-today-unreceived, undated, holiday-cancelled, and out-of-horizon quantities,
+while keeping the original dates and outstanding quantities visible.
+
+An active weekly schedule conflict makes a dated delivery expected-only until
+reconciled; an explicit extra-delivery exception permits its date. With no
+applicable weekly rule, an otherwise valid confirmed date remains usable.
+Delivery-cancelled exceptions exclude arrivals. Ordering-suspended exceptions
+block new ordering opportunities but do not cancel an existing placed shipment.
+Cutoff overrides alter cutoff information only. Existing POs are never rescheduled
+or rejected merely because their ordering cutoff has since passed. Historical
+order suppliers retain their own calendar even after ingredient reassignment.
+
+Physical-count confidence remains independent: the stored level is capped by
+read-only count age (24 hours high, 72 hours medium by default), missing/future
+counts, and unresolved discrepancy flags. Thresholds are configurable through
+Settings; no confidence fields are written by forecasting. Stale counts alone
+do not fabricate missing demand or erase otherwise calculable projections.
+Daily confidence describes the as-of snapshot, not future physical verification.
+
+One forecast batch supplies all active ingredients, both scenarios, and a
+conservative dashboard summary. Ingredient/scenario changes reuse it; range
+changes and explicit refresh request a new batch. No purchasing recommendation,
+rounding, order creation, contact action, or notification occurs here.
+
+## D41 — Current-day preview, pre-delivery risk, and evidence for remaining supply
+
+Today's preview starts from current actual stock and deducts remaining usage.
+Without an override, today's configured full-day demand is the conservative upper
+bound, independent of elapsed hours or recorded transactions. Staff may provide
+an explicit non-negative decimal estimate, including zero after operations.
+Blank/absent uses the configured default; missing remains unknown. No demand,
+inventory, order, receipt, or audit rows are written by this forecast request.
+Today's eligible outstanding deliveries are included using ordered minus accepted
+received quantity, so already-received stock is never counted twice. Today's
+projected close becomes tomorrow's opening; the 7/14/30 future dates remain
+separate from the current-day preview. The dashboard uses the same default.
+Overrides are ingredient-scoped and held in page memory, not permanent settings
+or browser storage. The UI includes the business date; the server rejects a
+stale-date override (409) and the UI reloads the new default with an explanation.
+
+No arrival time is inferred. Before-delivery balance = opening − demand. Where
+eligible incoming exists and that balance is negative, show a red pre-delivery
+shortage-risk badge for its magnitude, independently of closing availability.
+Signed closing remains opening + incoming − demand, carrying unmet demand forward.
+Thus 20 opening, 40 demand, and 120 incoming produce risk 20 and closing 100.
+The Korean weekly example uses Sunday 2026-11-15 as-of with explicit zero remaining
+usage (operations finished), then Monday–Sunday closings 140,100,60,20,100,40,-20.
+Friday warns of a possible 20-pc shortage before delivery despite closing at 100.
+
+A partial receipt proves accepted quantity, not supplier commitment to its
+remaining shipment. Conservative eligibility requires an existing order.confirm
+audit snapshot matching supplier, delivery date, ingredient, and ordered quantity.
+Receipt transitions may preserve that matching evidence; delay, cancellation,
+reordering/editing, malformed evidence, or receipt reversal invalidate it until
+reconfirmation. Missing legacy evidence yields Expected-only uncertain supply.
+This is a read-only interpretation; historical orders and receipts are untouched.
+Existing calendar exclusions and expected-only schedule conflicts still apply.
