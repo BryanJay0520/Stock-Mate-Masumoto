@@ -58,3 +58,26 @@ positive closing stock can coexist with a possible pre-delivery shortage. Unknow
 arrival times remain unknown. Partial-receipt status alone never implies that
 the outstanding remainder is confirmed; eligibility explanations show the evidence
 policy. These warnings wrap with their responsive table cell.
+
+Order Planner follows D42 and reuses `SM.ui`, `SM.forecastUI` quantity/confidence
+formatting and `SM.demandUI.quantity` validation. Native ingredient/scenario
+selectors reuse the loaded batch. Remaining Usage is temporary and supports zero;
+blank restores the labeled full-day upper bound. A dated override expires on
+business-day rollover. Offline failure clears stale advice, retains selectors,
+and offers Refresh recommendations. No stock or order action is exposed here.
+
+Urgency and count confidence remain separate. Pending-order advice includes
+visible order links and a verification warning before potential quantities;
+earlier shortages require physical/manual review and withhold numeric purchase
+advice. A positive closing balance or zero requirement never hides a red
+pre-delivery warning. Native disclosure controls expose daily arithmetic,
+assumptions, and each existing line's contribution phase. Supplier and order
+links open their established detail dialogs; Forecast Settings reuses its
+administrator-editable/staff-read-only modal.
+
+The page displays one selected ingredient with bounded detail tables (30-day
+search horizon); dashboard priority and cutoff lists show at most six/five rows
+and link to the full ingredient selector. This is a deterministic planning batch,
+not an unbounded history table. Existing document scrolling and table-to-card
+behavior own narrow layouts. Both roles may inspect recommendations, and all
+existing write permissions remain enforced by their owning APIs.

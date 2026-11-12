@@ -2,7 +2,7 @@
 
 ## Current phase
 
-**Phase 3 Step 2 — Stock forecasting and availability calendar: complete, awaiting review**
+**Phase 3 Step 3 — Smart order recommendations and supplier deadline planning: complete, awaiting review**
 
 - **Step 1 (skeleton): ✅ COMPLETE** (commit `a9de3bc`)
 - **Step 2 (database models + migrations + seed): ✅ COMPLETE** (commit `c9e72ae`)
@@ -200,7 +200,7 @@
   app CSS, browser suite; README, architecture, decisions, status, and handoff.
   No commit, push, deployment, projection engine, smart ordering, or Step 2 work.
 
-### Phase 3 Step 2 — Stock forecasting and availability calendar (uncommitted)
+### Phase 3 Step 2 — Stock forecasting and availability calendar (commit `85d5994`)
 
 - Added read-only, pinned-clock forecasting and authenticated
   `GET /forecast/calendar?days=7|14|30&ingredient_id=...`. One batch returns
@@ -283,7 +283,102 @@
   are Expected-only. One ingredient's temporary override is held per page batch;
   order dates are schema-required, with a defensive undated-input guard. No
   automatic ordering, package rounding, new POs, notifications, or Step 3 work.
-  Changes remain uncommitted and unstaged pending review.
+  Subsequently committed as `85d5994`; Step 3 remains a separate change.
+
+### Phase 3 Step 3 — Advisory order planning (uncommitted)
+
+- Added authenticated, read-only `GET /recommendations` and an Order Planner
+  page (D42). Reuses existing stock validation, demand estimates, current-day
+  remaining usage, supplier scheduling, incoming eligibility and count confidence.
+  No migration: head stays `0008_ingredient_demand_settings`.
+- One 30-day forecast and one opportunity calendar per active assigned supplier
+  supply a batch. The dashboard reuses the same response for its seven-day
+  forecast outlook and ordering summary; ingredient/scenario selections reuse
+  the loaded planner batch. No duplicate dashboard forecast request is made.
+- Earliest valid open/upcoming primary delivery and the next distinct valid
+  delivery define coverage. Supplier timezones, inclusive deadlines, opening
+  windows, additive ingredient rules and exceptions remain owned by scheduling.
+  One-time extras now obey date cancellations, suspensions and cutoff overrides.
+  No delivery is silently moved; no next cycle within 30 days means no quantity.
+- The raw additional need is the maximum daily deficit against planning safety
+  stock across the cycle. Incoming contributes once on its date; order item IDs
+  and phases distinguish quantities already in starting stock, cycle supply,
+  out-of-cycle supply, exclusions and drafts. Later shipments cannot cover
+  earlier demand. Target demand + safety is displayed separately.
+- Purchasing packages and minimums come from the chosen supplier's junction,
+  independently of counting packages. Positive requirements round up to whole
+  packages where required. Zero need stays zero; permitted base-unit purchasing
+  remains decimal-safe. Missing packages show raw need and configuration warnings.
+- Conservative and Expected preserve D41 confirmation evidence. If pending
+  supply changes the advice, visible order references and supplier contacts
+  accompany Verify Pending Order; no unconditional duplicate order is suggested.
+  Drafts warn without providing stock. Accepted/rejected receipt semantics and
+  overdue/delayed exclusions are unchanged.
+- Earlier negative closings suppress numeric advice until physical/manual
+  review: signed unmet demand is not treated as physical stock or a customer
+  backlog. Dated pre-delivery risks before, on, or within the cycle remain red
+  even with positive closing or zero order need. Count confidence remains separate.
+  Approved alternatives are informational and never allocate or duplicate advice.
+- UI reuses existing cards, badges, native selectors, decimal validation, detail
+  dialogs and responsive daily tables. Explanations, contacts, order contributions,
+  temporary zero/reset, network retry and staff read-only settings are covered.
+- Acceptance A–G: Friday demand 160 + safety 60 − starting 100 = 120 / two boxes;
+  confirmed 120 makes zero additional; uncertain 120 gives potential two versus
+  expected zero with verification; raw 135 rounds to three / 180; earlier stock
+  30 versus demand 80 warns shortage 50 and suppresses purchase quantities;
+  cancelled Monday extends coverage through Tuesday; independent supplier
+  schedules/packages stay separate. All examples exist only in isolated tests.
+- Development environment/path verified before implementation. Comparison backup:
+  `backend/backups/stockmate-before-planner-20261112T031828567927Z.db`.
+  No development reset/reseed or automatic demand configuration was performed.
+- Final verification: **329 backend passed**, one existing Starlette/httpx
+  deprecation warning, **403.39s**. Planner-focused suite: **56 passed**,
+  one same warning, **56.53s**. Frontend: **16 passed**. Real Windows Chrome
+  155 integration: **62/62 passed**, including pending versus confirmed advice,
+  zero/reset and invalid input, no stock/order/demand writes, red shortage risk
+  with zero expected order need, keyboard disclosure, linked supplier/order
+  dialogs, staff read-only settings, offline retry and phone layouts.
+  The final suite retains the Step 2 Korean weekly acceptance and all ledger,
+  receiving, migrations, authentication and concurrency regressions.
+- Screenshots: Windows temp `stockmate-browser-PPCN0G` (desktop, 390px advice,
+  daily cards, urgent review and zero-order red risk). Native selector keyboard
+  opening/Escape cancellation and focus also passed in `stockmate-browser-OmRP15`.
+  Visual review confirmed existing blue/white tokens, readable risk and count
+  badges, wrapping contacts and daily cards without horizontal overflow.
+- UI static audit: only the two pre-existing literal menu/logout button findings
+  in `frontend/index.html:25/29`; their real `app.js` handlers and browser tests
+  verify both actions. Report: `/tmp/stockmate-planner-ui-audit.json`.
+  DESIGN.md lint: zero errors, four existing unused-token warnings. Changed
+  JavaScript syntax and `git diff --check` pass.
+- Read-only final comparison: **all 18 development tables unchanged** against
+  the pre-planner backup, including inventory, transactions, purchase orders,
+  receipts, audit/auth records and Alembic revision. Ledger/cache match, no
+  foreign-key violations, SQLite quick check `ok`, head 0008, and operational
+  demand configuration remains empty. Report:
+  `/tmp/stockmate-planner-db-verification.json`. No reset/reseed was performed.
+- New files: `backend/app/services/recommendations.py`,
+  `backend/app/schemas/recommendations.py`, `backend/app/api/v1/routes/recommendations.py`,
+  `backend/tests/test_recommendations.py`, `frontend/js/pages/planner.js`,
+  `frontend/tests/planner.test.js`.
+- Modified backend files: `backend/app/api/v1/router.py`,
+  `backend/app/schemas/forecast.py`, `backend/app/services/forecast.py`,
+  `backend/app/services/scheduling.py`.
+- Modified frontend files: `frontend/index.html`, `frontend/css/app.css`,
+  `frontend/js/app.js`, `frontend/js/pages/dashboard.js`,
+  `frontend/js/pages/orders.js`, `frontend/js/pages/suppliers.js`,
+  `frontend/tests/browser_smoke.mjs`.
+- Modified documentation: `README.md`, `DESIGN.md`, `UX-CONTRACT.md`,
+  `docs/ARCHITECTURE.md`, `docs/DECISIONS.md`, `docs/PROJECT_STATUS.md`,
+  `docs/AGENT_HANDOFF.md`. Total **24 files: 18 modified, six new**, unstaged
+  and uncommitted at completion; no database, backup, environment or temporary
+  artifact belongs to the changeset.
+- Limitations: 30-day search; current snapshots only; unknown arrival times;
+  conservative full-day remaining-usage default may overestimate after some
+  usage is recorded. Early shortages and low/stale counts need manual review.
+  Temporary overrides are not stored. Alternative stock is not guaranteed.
+  No automatic order creation/submission, contact, notifications, supplier
+  switching, split allocation, background reminders, commit, push, deployment,
+  or Phase 4 work.
 
 Phase 0 was approved with three final requirements, now reflected in the docs:
 D15 (SQLite-safe concurrency: `BEGIN IMMEDIATE` + atomic conditional UPDATE +
@@ -299,7 +394,7 @@ junction row; service validates supplier `active` status).
 | 0 | Planning, architecture, docs (incl. review revision) | ✅ Done (commit `e53898d`) |
 | 1 | Inventory MVP: DB, auth, ingredients, **basic supplier CRUD + assignment**, dual stock entry, ledger, dashboard, confidence timestamps | 🔶 Steps 1–7 of 8 done |
 | 2 | Supplier schedule rules, delivery calendars, cutoff engine, purchase orders, delivery confirmation, supplier reminders (engine part), alternative-supplier ordering | 🔶 Steps 1–3 committed (`2a34b14`, `f08e48b`, `bfcb824`) |
-| 3 | Demand forecasting, forecast calendar, status colors, order suggestions, confidence indicators | 🔶 Step 1 committed (`a49d61a`); Step 2 implemented; Step 3 not started |
+| 3 | Demand forecasting, forecast calendar, status colors, order suggestions, confidence indicators | 🔶 Steps 1–2 committed (`a49d61a`, `85d5994`); Step 3 implemented, uncommitted |
 | 4 | Scheduled reminders, in-app notifications, preferences, provider routing | ⬜ Not started |
 | 5 | Analytics, reports, CSV export, simple statistics | ⬜ Not started |
 | 6 | Deployment readiness: security, regression, backups | ⬜ Not started |

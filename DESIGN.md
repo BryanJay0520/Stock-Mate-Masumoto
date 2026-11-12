@@ -77,6 +77,12 @@ critical red badge for pre-delivery shortage risk, independently of a positive
 closing-stock badge; keep both labels readable on mobile cards.
 The dashboard uses a concise forecast summary with ingredient links and keeps
 its existing four actual-inventory stat cards.
+Order Planner uses the same cards, quantity typography, status badges, native
+selectors, and responsive daily tables. Lead with review status and calculated
+or provisional purchasing units, then the dated cutoff/coverage facts. Keep
+urgent pre-delivery risk visible beside pending-order and count checks. Native
+disclosures hold calculation and order contributions; contacts remain plain,
+readable operational instructions. No new palette or dashboard theme is added.
 
 ## Elevation & Depth
 

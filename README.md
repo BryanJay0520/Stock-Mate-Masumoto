@@ -3,13 +3,14 @@
 Smart restaurant inventory management and supply planning system.
 Web-based, mobile-ready, designed initially for a ramen restaurant.
 
-🚧 **Work in Progress — Phase 3 Step 2 forecasting and availability calendar implemented**
+🚧 **Work in Progress — Phase 3 Step 3 advisory order planning implemented**
 
 The responsive web UI includes login, dashboard, inventory, package-aware
 daily stock entry, supplier and ingredient management, purchase orders and
 delivery receiving, transaction history with corrections, and account
 settings, editable ingredient demand estimates, and a read-only Forecast Calendar.
-Smart ordering and notifications arrive in later steps.
+Order Planner provides advisory purchasing quantities and supplier deadlines.
+Automatic ordering and notifications are outside this step.
 
 ## What it does (planned)
 
@@ -192,6 +193,36 @@ Count confidence is separate from availability and is capped by count age
 `STOCKMATE_COUNT_HIGH_FRESHNESS_HOURS` and `STOCKMATE_COUNT_MEDIUM_FRESHNESS_HOURS`.
 Forecast views do not change stock, write ledger entries, create purchase orders,
 or recommend purchase quantities. No migration beyond 0008 is needed.
+
+## Order Planner
+
+Open **Order Planner** to review an ingredient's next valid supplier deadline,
+delivery, coverage period, and conservative/expected additional requirement.
+Expand the daily calculation to see how dated incoming and usage affect stock.
+Today's remaining usage uses the same full-day upper bound and temporary-zero
+override policy as Forecast Calendar. The dashboard uses the default policy.
+
+Advice uses the active primary supplier's next two valid delivery opportunities
+within a 30-day search horizon. Holidays, opening windows, inclusive cutoffs,
+supplier timezones, and ingredient-specific rules come from Supplier Scheduling.
+Coverage ends the day before the following actionable delivery. Missing demand,
+an unknown following delivery, or missing purchasing settings shows what needs
+configuration rather than inventing a quantity.
+
+The additional requirement covers the largest daily shortfall against planning
+safety stock. A shipment later in the cycle cannot cover an earlier day. Whole
+packages round upward using that supplier's purchasing package and minimum order;
+counting packages remain independent. For example, Friday–Sunday demand of
+160 pc, safety 60 pc, and 100 pc before Friday requires 120 pc: two 60-pc boxes.
+A confirmed 120-pc Friday order covers it; an unconfirmed order instead requires
+**Verify Pending Order** before considering any additional purchase.
+
+Earlier shortages withhold numeric purchase advice until a physical count or
+manual review. Same-day pre-delivery risks remain visible even if no additional
+order is needed. Stale counts require verification. Supplier contacts, existing
+orders/drafts, and approved alternative opportunities are available for review.
+The planner never creates orders, sends messages, changes suppliers, or writes
+stock. No operational demand settings are populated automatically.
 
 ## Authentication (added Step 3)
 

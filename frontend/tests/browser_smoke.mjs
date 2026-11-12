@@ -39,6 +39,7 @@ let ws;
 let nextId = 1;
 const pending = new Map();
 let forecastRequests = 0;
+let plannerRequests = 0;
 
 // --- Tiny CDP client --------------------------------------------------------
 
@@ -190,6 +191,7 @@ async function boot() {
   ws.onmessage = (event) => {
     const msg = JSON.parse(event.data);
     if (msg.method === "Network.requestWillBeSent" && msg.params.request.url.includes("/api/v1/forecast/calendar")) forecastRequests++;
+    if (msg.method === "Network.requestWillBeSent" && msg.params.request.url.includes("/api/v1/recommendations")) plannerRequests++;
     if (msg.id && pending.has(msg.id)) {
       const { resolve, reject } = pending.get(msg.id);
       pending.delete(msg.id);
@@ -1155,6 +1157,115 @@ function SMQuantity(value) {
   return value === null ? "Unknown" : String(value).replace(/\.0+$/, "");
 }
 
+async function plannerTests() {
+  let korean, beforeStock, beforeHistory, beforeOrders, beforeDemand;
+  await test("order planner explains supplier-specific coverage and pending-order safeguards", async () => {
+    beforeStock = await apiAsSession("/inventory/stock");
+    beforeHistory = await apiAsSession("/inventory/transactions?limit=200");
+    beforeOrders = await apiAsSession("/purchase-orders?limit=200");
+    korean = beforeStock.find(row => row.ingredient_name === "Korean Noodles");
+    beforeDemand = await apiAsSession(`/ingredients/${korean.ingredient_id}/demand-settings`);
+    await navigate(`/planner?ingredient_id=${korean.ingredient_id}`);
+    await waitFor(`document.querySelector("#planner-content .planner-card")`);
+    await assertText("#planner-content", "Verify Pending Order");
+    await assertText("#planner-content", "Confirm the pending order before ordering additional stock");
+    await assertText("#planner-content", "Next actionable cutoff");
+    await assertText("#planner-content", "Coverage through");
+    await assertText("#planner-content", "Tokyo Noodle Co.");
+    await assertText("#planner-purchase", "Potential requirement — review first");
+    await evaluate(`document.getElementById("planner-calculation").open = true`);
+    await assertText("#planner-calculation", "a later shipment cannot cover earlier demand");
+    await screenshot("planner-desktop");
+  });
+  await test("planner scenario and ingredient selectors reuse one calculated batch", async () => {
+    const calls = plannerRequests;
+    await evaluate(`(() => {const s=document.getElementById("planner-scenario");s.value="expected";s.dispatchEvent(new Event("change"));})()`);
+    await assertText("#planner-content", "Expected advice");
+    await assertText("#planner-purchase", "0 pc");
+    await evaluate(`(() => {const s=document.getElementById("planner-ingredient");s.value=[...s.options].find(o=>o.text.includes("Nori")).value;s.dispatchEvent(new Event("change"));})()`);
+    await assertText("#planner-content", "Configuration Required");
+    await assertText("#planner-purchase", "awaiting configuration");
+    await evaluate(`(() => {const s=document.getElementById("planner-ingredient");s.value="${korean.ingredient_id}";s.dispatchEvent(new Event("change"));})()`);
+    assert(plannerRequests === calls, "local selector changes repeated the planning calculation");
+  });
+  await test("planner temporary zero and early-shortage review never save demand or order stock", async () => {
+    await evaluate(`document.getElementById("planner-today-usage").value="-1";[...document.querySelectorAll("#view button")].find(b=>b.textContent==="Apply remaining usage").click()`);
+    await waitFor(`document.getElementById("planner-today-usage").getAttribute("aria-invalid")==="true"`);
+    await evaluate(`document.getElementById("planner-today-usage").value="0";[...document.querySelectorAll("#view button")].find(b=>b.textContent==="Apply remaining usage").click()`);
+    await waitFor(`document.querySelector("#planner-content .planner-card") && document.getElementById("planner-today-usage").value==="0" && document.getElementById("planner-content").getAttribute("aria-busy")==="false"`);
+    await evaluate(`document.getElementById("planner-today-usage").value="500";[...document.querySelectorAll("#view button")].find(b=>b.textContent==="Apply remaining usage").click()`);
+    await waitFor(`document.getElementById("planner-content").textContent.includes("Urgent Shortage Risk")`);
+    await assertText("#planner-content", "A regular order cannot resolve the earlier shortage");
+    await assertText("#planner-content", "not physical negative stock");
+    await assertText("#planner-content", "Check an approved alternative supplier");
+    await assertText("#planner-purchase", "awaiting configuration or manual review");
+    await screenshot("planner-urgent-review");
+    await evaluate(`[...document.querySelectorAll("#view button")].find(b=>b.textContent==="Use configured full-day estimate").click()`);
+    await waitFor(`document.getElementById("planner-today-usage").value==="" && document.querySelector("#planner-content .planner-card")`);
+    assert(JSON.stringify(await apiAsSession(`/ingredients/${korean.ingredient_id}/demand-settings`)) === JSON.stringify(beforeDemand), "planner saved permanent demand");
+  });
+  await test("planner links open existing supplier and purchase-order details", async () => {
+    await evaluate(`[...document.querySelectorAll("#planner-content a")].find(a=>a.textContent==="Supplier Details →").click()`);
+    await waitFor(`document.querySelector(".modal-overlay")`);
+    await assertText(".modal-overlay", "Tokyo Noodle Co.");
+    await evaluate(`document.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape"}))`);
+    await navigate(`/planner?ingredient_id=${korean.ingredient_id}`);
+    await waitFor(`document.querySelector("#planner-content .planner-card")`);
+    await evaluate(`[...document.querySelectorAll("#planner-content a")].find(a=>a.textContent.startsWith("Order #")).click()`);
+    await waitFor(`document.querySelector(".modal-overlay")`);
+    await assertText(".modal-overlay", "Expected delivery");
+    await evaluate(`document.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape"}))`);
+    await navigate(`/planner?ingredient_id=${korean.ingredient_id}`);
+    await waitFor(`document.querySelector("#planner-content .planner-card")`);
+  });
+  await test("planner keeps red same-day risk visible with zero expected order need", async () => {
+    await evaluate(`(() => {const s=document.getElementById("planner-scenario");s.value="expected";s.dispatchEvent(new Event("change"));document.getElementById("planner-today-usage").value="60";[...document.querySelectorAll("#view button")].find(b=>b.textContent==="Apply remaining usage").click();})()`);
+    await waitFor(`document.querySelector("#planner-content .planner-risk .badge--critical")`);
+    await assertText("#planner-content .planner-risk", "20 pc");
+    await assertText("#planner-purchase", "0 pc");
+    await assertText("#planner-content", "Urgent Shortage Risk");
+    await evaluate(`document.querySelector(".planner-card").scrollIntoView({block:"start"})`);
+    await screenshot("planner-zero-order-red-risk");
+    await evaluate(`[...document.querySelectorAll("#view button")].find(b=>b.textContent==="Use configured full-day estimate").click()`);
+    await waitFor(`document.querySelector("#planner-content .planner-card") && document.getElementById("planner-today-usage").value===""`);
+    await evaluate(`document.querySelector("#planner-calculation summary").focus()`);
+    await send("Input.dispatchKeyEvent", {type:"keyDown",key:" ",code:"Space",windowsVirtualKeyCode:32,nativeVirtualKeyCode:32});
+    await send("Input.dispatchKeyEvent", {type:"keyUp",key:" ",code:"Space",windowsVirtualKeyCode:32,nativeVirtualKeyCode:32});
+    await waitFor(`document.getElementById("planner-calculation").open`);
+  });
+  await test("planner retries network errors and remains readable on a phone", async () => {
+    try {
+      await send("Network.emulateNetworkConditions",{offline:true,latency:0,downloadThroughput:-1,uploadThroughput:-1});
+      await evaluate(`[...document.querySelectorAll("#view button")].find(b=>b.textContent==="Refresh recommendations").click()`);
+      await waitFor(`document.querySelector("#view .alert--error")?.textContent.includes("Could not reach")`);
+    } finally {
+      await send("Network.emulateNetworkConditions",{offline:false,latency:0,downloadThroughput:-1,uploadThroughput:-1});
+    }
+    await evaluate(`[...document.querySelectorAll("#view button")].find(b=>b.textContent==="Refresh recommendations").click()`);
+    await waitFor(`document.querySelector("#planner-content .planner-card")`);
+    await setViewport(390);
+    assert(await evaluate(`document.documentElement.scrollWidth-innerWidth<=1`), "planner overflows a phone viewport");
+    await screenshot("planner-390");
+    await evaluate(`document.querySelector(".planner-card").scrollIntoView({block:"start"})`);
+    await screenshot("planner-390-advice");
+    await evaluate(`document.getElementById("planner-calculation").open=true;document.getElementById("planner-calculation").scrollIntoView({block:"start"})`);
+    assert(await evaluate(`document.documentElement.scrollWidth-innerWidth<=1`), "daily calculation overflows a phone viewport");
+    await screenshot("planner-390-calculation");
+    await setViewport(1440);
+  });
+  await test("dashboard shares a planning batch and planner viewing writes no operational records", async () => {
+    const calls = plannerRequests, forecastCalls = forecastRequests;
+    await navigate("/dashboard");
+    await waitFor(`document.getElementById("planner-summary")`);
+    await assertText("#planner-summary", "Urgent shortages / delivery risks");
+    await assertText("#planner-summary", "Pending orders to verify");
+    assert(plannerRequests === calls+1 && forecastRequests === forecastCalls, "dashboard repeated the forecast calculation request");
+    assert(JSON.stringify(await apiAsSession("/inventory/stock")) === JSON.stringify(beforeStock), "planner changed balances");
+    assert(JSON.stringify(await apiAsSession("/inventory/transactions?limit=200")) === JSON.stringify(beforeHistory), "planner wrote ledger rows");
+    assert(JSON.stringify(await apiAsSession("/purchase-orders?limit=200")) === JSON.stringify(beforeOrders), "planner changed orders");
+  });
+}
+
 async function correctionTests() {
   await test("correction is blocked after a newer physical count (D27 warning)", async () => {
     await navigate("/history");
@@ -1292,6 +1403,17 @@ async function staffTests() {
     assert(!(await evaluate(`document.querySelector("#view").textContent.includes("Save Forecast Settings")`)), "forecast view exposes editing");
   });
 
+  await test("staff can inspect advisory planning and read-only demand settings", async () => {
+    await navigate("/planner");
+    await waitFor(`document.querySelector("#planner-content .planner-card")`);
+    await assertText("#planner-content", "Advisory snapshot");
+    assert(!(await evaluate(`[...document.querySelectorAll("#view button")].some(b=>["New Order","Place Order","Send Order"].includes(b.textContent))`)), "planner exposes an order action");
+    await evaluate(`[...document.querySelectorAll("#view button")].find(b=>b.textContent==="Ingredient Forecast Settings").click()`);
+    await waitFor(`document.getElementById("demand-form")`);
+    await assertText("#demand-form", "Read-only forecast settings");
+    await evaluate(`document.dispatchEvent(new KeyboardEvent("keydown",{key:"Escape"}))`);
+  });
+
   await test("cleared session redirects protected pages to login", async () => {
     await openDemand();
     await send("Network.clearBrowserCookies");
@@ -1315,6 +1437,7 @@ try {
   await packageCountingTests();
   await demandTests();
   await forecastTests();
+  await plannerTests();
   await ingredientTests();
   await correctionTests();
   await responsiveTests();

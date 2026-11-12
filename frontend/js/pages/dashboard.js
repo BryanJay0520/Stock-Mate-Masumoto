@@ -7,7 +7,7 @@ SM.pages = SM.pages || {};
 SM.pages.dashboard = {
   async render(view) {
     const ui = SM.ui;
-    const forecastTask = SM.api.get("/forecast/calendar?days=7")
+    const planningTask = SM.api.get("/recommendations")
       .then(data => ({data}), error => ({error}));
     const { rows, ingredients, suppliers } = await SM.data.catalog();
     const transactions = await SM.api.get("/inventory/transactions?limit=8");
@@ -37,10 +37,13 @@ SM.pages.dashboard = {
       ui.el("a", { class: "btn btn--secondary", href: "#/inventory", text: "View Inventory" }),
     ));
 
-    const forecast = await forecastTask;
-    view.append(forecast.data ? SM.forecastUI.summaryCard(forecast.data) : ui.el("div", {class: "card"},
-      ui.el("h2", {class: "card__title", text: "Forecast outlook"}), ui.alert(forecast.error.message),
+    const planning = await planningTask;
+    view.append(planning.data ? SM.forecastUI.summaryCard({summary: planning.data.forecast_summary}) : ui.el("div", {class: "card"},
+      ui.el("h2", {class: "card__title", text: "Forecast outlook"}), ui.alert(planning.error.message),
       ui.el("a", {href: "#/forecast", text: "Open Forecast Calendar to retry →"})));
+    view.append(planning.data ? SM.plannerUI.summaryCard(planning.data) : ui.el("div", {class: "card"},
+      ui.el("h2", {class: "card__title", text: "Smart ordering"}), ui.alert(planning.error.message),
+      ui.el("a", {href: "#/planner", text: "Open Order Planner to retry →"})));
 
     // Upcoming deliveries — ordered but not yet received (Phase 2 Step 2).
     const deliveriesCard = ui.el("div", { class: "card" },

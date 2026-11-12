@@ -9,6 +9,7 @@ SM.app = {
     dashboard: { title: "Dashboard", label: "Dashboard" },
     inventory: { title: "Inventory", label: "Inventory" },
     forecast: { title: "Forecast Calendar", label: "Forecast Calendar" },
+    planner: { title: "Order Planner", label: "Order Planner" },
     entry: { title: "Daily Stock Entry", label: "Daily Stock Entry" },
     suppliers: { title: "Suppliers", label: "Suppliers" },
     orders: { title: "Purchase Orders", label: "Purchase Orders" },

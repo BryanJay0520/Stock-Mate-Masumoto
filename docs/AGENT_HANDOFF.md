@@ -5,7 +5,7 @@
 
 ## Where the project is
 
-- **Current phase:** Phase 3 Step 2 — stock forecasting and availability calendar.
+- **Current phase:** Phase 3 Step 3 — smart order recommendations and supplier deadline planning.
 - **Progress:** Phase 1 complete (through `a67d07e`). Phase 2 Step 1
   (`2a34b14`) and Step 2 (`f08e48b`) committed. Phase 2 Step 3 (delivery
   receiving & stock integration) is **implemented; Codex reconciliation
@@ -14,7 +14,9 @@
   enhancement and guarded fictional development data reset are documented in
   `PROJECT_STATUS.md` and committed as `dd67047`. Step 1 demand configuration
   is committed as `a49d61a`. Step 2 read-only forecasting and its calendar are
-  implemented and uncommitted; automatic ordering has NOT started.
+  committed as `85d5994` (verified HEAD and origin/main before Step 3).
+  Step 3 advisory planning is implemented and uncommitted; automatic ordering
+  and Phase 4 have NOT started.
   The demo database has
   Korean Noodles in `pc` with 60 pieces per Box and 180 pieces opening stock.
 - Phase 3 Step 1 verification: 214 backend, 8 frontend, and 45 real-browser
@@ -30,6 +32,28 @@
   foreign keys reconcile. See D40/D41 and the
   implementation/file inventory in PROJECT_STATUS.md. Do not reset development
   data or seed hypothetical forecast orders into it.
+- Step 3 uses `services/recommendations.py`, `schemas/recommendations.py` and
+  read-only `GET /recommendations` (both roles), plus the Order Planner page.
+  D42 defines time-phased daily safety deficits, supplier-specific purchasing
+  rounding, pending-order verification, early-shortage review and informational
+  alternatives. No new schema or operational demand values. A 30-day search
+  requires two actionable delivery dates; unknown coverage withholds quantities.
+  The dashboard obtains its planning and seven-day forecast summaries in one
+  batch. Existing forecast/scheduling logic is reused, including confirmation
+  audits for partial shipments. Extras now obey blocking/cutoff exceptions too.
+- Step 3 comparison backup:
+  `backend/backups/stockmate-before-planner-20261112T031828567927Z.db`.
+  All 18 development tables match it after verification; ledger/cache, foreign
+  keys and SQLite quick check pass. Head remains 0008 and demand settings remain
+  empty. Never reset/reseed development data for testing.
+- Step 3 verification: **329 backend passed** (403.39s, one existing TestClient
+  deprecation warning), **56 focused planner passed**, **16 frontend passed**,
+  **62 real Chrome passed**. Screenshots `stockmate-browser-PPCN0G`; native
+  selector keyboard audit `stockmate-browser-OmRP15`. DESIGN lint has zero
+  errors/four existing unused-token warnings; static audit still reports only
+  the two known external-handler menu/logout false positives. See the exact
+  file inventory and policies in PROJECT_STATUS.md. Stop for user review;
+  no commit, push, deployment or Phase 4 work is authorized.
 - Development happens **incrementally, one step at a time** — never implement
   multiple steps without explicit user approval.
 
@@ -53,7 +77,7 @@
 ## Read these before doing anything
 
 1. `docs/ARCHITECTURE.md` — full architecture, database schema, business logic.
-2. `docs/DECISIONS.md` — binding decisions D1–D40. Supersede, never silently
+2. `docs/DECISIONS.md` — binding decisions D1–D42. Supersede, never silently
    change. (Renumbered during the Phase 0 revision — cite current text.)
 3. `docs/PROJECT_STATUS.md` — roadmap + the ordered Phase 1 checklist with
    per-step status.
@@ -425,12 +449,12 @@
 
 ## Pending decisions (waiting on user)
 
-- Approval to commit Phase 3 Step 2 after review, then separate approval for
-  Step 3. Do not automatically commit, push, deploy, or start smart ordering.
+- Approval to commit Phase 3 Step 3 after review, then separate approval for
+  later phases. Do not automatically commit, push, deploy, or start Phase 4.
 
 ## Recommended next task
 
-Review Step 2's results and assumptions in PROJECT_STATUS.md and D40/D41. Forecast
+Review Step 3's results and assumptions in PROJECT_STATUS.md and D40/D41/D42. Forecast
 reads validate ledger/cache consistency, reuse D39 daily demand, never write
 stock/orders, and expose excluded supply separately. Missing consumption poisons
 downstream balances rather than inventing zero. No historical as-of query or
@@ -438,7 +462,8 @@ persisted usage override is supported. Today's separate preview defaults to the
 configured full-day upper bound, permits a temporary zero override, and feeds
 tomorrow. Red pre-delivery risk is independent of closing availability. Partial
 remainders need matching confirmation audits for conservative eligibility.
-Migration head stays 0008. Stop for review; Step 3 is not authorized.
+Planning remains advisory and time-phased, with no order creation or supplier
+contact. Migration head stays 0008. Stop for review; Phase 4 is not authorized.
 
 ## Git
 

@@ -486,3 +486,73 @@ reordering/editing, malformed evidence, or receipt reversal invalidate it until
 reconfirmation. Missing legacy evidence yields Expected-only uncertain supply.
 This is a read-only interpretation; historical orders and receipts are untouched.
 Existing calendar exclusions and expected-only schedule conflicts still apply.
+
+## D42 — Advisory, time-phased order planning from the existing forecast snapshot
+
+Phase 3 Step 3 adds read-only `GET /api/v1/recommendations`. No migration,
+recommendation table, stock write, order creation, contact action, or supplier
+switch is introduced. One 30-day forecast batch and one scheduling calculation
+per active assigned supplier feed all ingredient recommendations. The dashboard
+uses that same response for planning and its seven-day forecast summary.
+
+The primary supplier remains the default. Scheduling supplies dated opportunities
+with its own timezone, inclusive cutoff, opening window, additive ingredient
+rules (D32), and calendar exceptions. Choose the earliest delivery with a valid
+open or upcoming ordering window, skipping expired or blocked cycles. Upcoming
+means wait until the displayed opening time; it does not authorize ordering now.
+Deduplicate applicable rules for the same delivery date. Coverage runs from that
+delivery date through the day before the next valid actionable delivery date.
+Both dates must be established within 30 business-calendar dates; otherwise
+return Configuration Required and no fabricated quantity. Cancellations,
+suspensions and cutoff overrides apply to one-time extra deliveries too.
+
+Starting stock is the forecast opening on the proposed delivery date: actual
+stock now, minus remaining usage today and subsequent usage before delivery,
+plus eligible incoming before that date. D41's full-day remaining-usage upper
+bound, temporary nonnegative/zero override, unknown propagation, signed balances,
+and confirmation-evidence rules remain unchanged. Existing order item IDs and
+their dates show whether a line is already in starting stock, contributes during
+the cycle, is outside the cycle, is excluded, or is an unfinished draft. A line
+is never deducted from the requirement a second time after entering the forecast.
+
+For each conservative/expected scenario, calculate cycle demand + safety as the
+displayed target. Walk each cycle date from projected starting stock, adding only
+that date's eligible incoming and deducting its demand. The raw additional
+requirement is the maximum of zero and safety minus each resulting daily close.
+This is a prefix-deficit calculation: later shipments cannot cover earlier demand.
+Cycle sizing includes arrivals before that date's usage, but arrival times remain
+unknown. Pre-delivery risk is independent of a positive close or zero order need.
+
+Round positive requirements using the selected supplier's purchasing package,
+never the ingredient's counting package. Honor the supplier minimum quantity;
+when whole packages are required, ceil(max(requirement, minimum) / package size).
+No order need stays zero despite a minimum. For suppliers permitting base-unit
+purchasing, show exact three-decimal base units without inventing a package count.
+Missing/invalid package sizes retain the raw base-unit requirement but withhold
+purchase quantities and explain the configuration gap. Unsupported rounded
+quantities also require configuration/manual review.
+
+If uncertain incoming changes the requirement or prevents an earlier shortage,
+both scenarios require Verify Pending Order, cite those orders, and withhold
+definitive advice. Conservative quantities are potential requirements, never
+instructions to place duplicate orders. Drafts warn but provide no supply.
+Rejected goods are not available; accepted receipts already in stock are not
+added again. Delayed/overdue shipments keep their dates and remain excluded.
+
+An earlier negative projected close represents unfulfilled modeled demand, not
+physical negative stock or a customer obligation to replenish. Suppress numeric
+order advice until a fresh physical count or appropriate manual review; show
+the prior shortage, proposed cycle, target where known, and manual actions.
+Possible demand-before-delivery risks make advice provisional independently of
+count freshness. Stale/low count confidence calls for verification separately.
+Approved alternative suppliers are informational opportunities only, with their
+own cutoff, package, and contact requirements; stock availability is unconfirmed
+and no quantities are allocated or supplier assignments changed.
+
+Acceptance: Friday–Sunday demand 160, safety 60, starting 100 gives target 220,
+raw requirement 120 and two 60-piece boxes. Confirmed 120 for Friday reduces
+this to zero; uncertain 120 instead yields conservative two / expected zero,
+with pending-order verification. Raw 135 rounds to three boxes / 180 pieces.
+Earlier stock 30 versus demand 80 warns of shortage 50 and suppresses definitive
+ordering. A cancelled Monday extends Friday coverage through Tuesday when
+Wednesday is the next valid opportunity. All examples run only in isolated tests.

@@ -256,6 +256,11 @@
 .forecast-today-controls .field { max-width: 480px; }
 .forecast-risk-details .badge { white-space: normal; margin-bottom: var(--space-2); }
 .forecast-risk-details span { overflow-wrap: anywhere; }
+.planner-card .badge { white-space: normal; }
+.planner-purchase { font-size: var(--font-size-lg); font-weight: 600; margin: var(--space-4) 0; }
+.planner-contact p { overflow-wrap: anywhere; }
+.planner-links { margin-top: var(--space-4); }
+.planner-card summary { cursor: pointer; }
 @media (max-width: 720px) {
   .forecast-arrivals { text-align: right; }
 }

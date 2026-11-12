@@ -109,6 +109,7 @@ Endpoints (Phase 1 subset marked •):
 - `GET/POST /api/v1/purchase-orders`, `POST /api/v1/purchase-orders/{id}/mark-ordered` (Phase 2)
 - `POST /api/v1/purchase-orders/{id}/confirm-delivery` (Phase 2)
 - `GET /api/v1/forecast/calendar?days=7&ingredient_id=…` (Phase 3)
+- `GET /api/v1/recommendations?ingredient_id=…` (Phase 3 Step 3, read-only order planning)
 - `GET /api/v1/notifications`, `POST /api/v1/notifications/{id}/acknowledge` (Phase 4)
 - `GET/PUT /api/v1/admin/settings` (Phase 4; minimal subset may appear earlier)
 
@@ -582,6 +583,53 @@ and already-confirmed incoming; round up to `package_size`, respect
 `min_order_quantity`. The API returns all calculation inputs with the result
 (explainable), respects outstanding orders (no duplicate replenishment), and
 never auto-submits.
+
+**Step 3 implementation (D42):** `services/recommendations.py` reuses one 30-day
+`generate_forecast` batch and the existing per-supplier opportunity engine. Its
+structured response is in `schemas/recommendations.py`; the authenticated
+`GET /recommendations` route supports the same ingredient-scoped temporary
+remaining-usage override and optional business-date guard as Forecast Calendar.
+No table or migration is needed; head remains 0008. Both staff and administrators
+may read advice. All operational mutations continue through existing services.
+
+The service chooses the earliest primary-supplier delivery whose opportunity is
+open or upcoming, then the next distinct valid delivery date within 30 days.
+Ingredient-specific schedule rows remain additive. Opening windows are displayed
+and upcoming windows are explicitly not open yet. Inclusive cutoff and supplier
+timezone calculations are owned by `scheduling.py`; expired or blocked cycles
+are skipped without changing an order's expected date. A one-time extra delivery
+obeys cancellations, suspensions, and effective cutoff overrides too.
+
+Coverage starts on the proposed delivery and ends the day before the following
+actionable delivery. Starting stock is that date's forecast opening, including
+only already-dated eligible incoming before it. Each existing order line exposes
+its item ID, outstanding/accepted quantities, eligibility, and contribution phase.
+Within the cycle, daily incoming is applied once on its date. Additional quantity
+is the largest daily deficit against safety across the coverage period, clamped
+to zero. This protects earlier dates from being falsely covered by later stock.
+The displayed demand-plus-safety target is separate from the time-phased result.
+
+Purchasing rounds with supplier-junction size/name/whole-package/minimum fields.
+Counting packages never participate. Zero need is not raised to a minimum.
+Missing purchasing configuration leaves raw required units visible while package
+and recommended quantity remain unknown. Non-whole purchasing shows exact base
+units; rounded quantities respect NUMERIC(14,3) limits.
+
+Conservative and Expected calculations keep D41's eligible incoming split. If a
+pending shipment changes the result, Verify Pending Order appears with order and
+contact references; potential conservative quantities are not unconditional
+ordering instructions. Drafts are visible without counting as supply. Earlier
+negative closings suppress quantities until physical/manual review; signed unmet
+demand is never silently converted into a customer backlog. Same-day risk remains
+separate from quantity and closing status. Alternatives are manual, unconfirmed
+opportunities and never duplicate ingredient requirements or allocate quantities.
+
+The dashboard obtains one recommendation batch, reuses its forecast summary
+limited to today plus seven future dates, and renders ordering priorities and
+upcoming cutoffs. Order Planner uses native ingredient/scenario selectors over
+one batch, temporary remaining-usage controls, expandable daily calculations,
+supplier contacts, existing-order contributions, and links into canonical detail
+dialogs. No purchasing or supplier-contact side effect exists in the planner.
 
 ### 5.5 Stock Confidence Indicator
 

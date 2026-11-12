@@ -602,8 +602,14 @@ def compute_opportunities(db: Session, *, supplier_id: int, now_utc: datetime,
 
     today_business = now_utc.astimezone(ZoneInfo(business_tz)).date()
     for exc in extras:
-        times_cutoff = _as_utc(exc.override_cutoff_at)
-        status = _cycle_status(now_utc, today_business, exc.date, times_cutoff, None)
+        override = cutoff_overrides.get(exc.date)
+        times_cutoff = _as_utc(override.override_cutoff_at if override else exc.override_cutoff_at)
+        exception_info = {"type": exc.type, "note": exc.note}
+        if exc.date in blocked:
+            status = STATUS_UNAVAILABLE_HOLIDAY
+            exception_info = {"type": blocked[exc.date].type, "note": blocked[exc.date].note}
+        else:
+            status = _cycle_status(now_utc, today_business, exc.date, times_cutoff, None)
         opportunities.append({
             "rule_id": exc.schedule_rule_id,
             "supplier_id": supplier.id,
@@ -618,7 +624,7 @@ def compute_opportunities(db: Session, *, supplier_id: int, now_utc: datetime,
             "status": status,
             "special_instructions": exc.note,
             "contact": None,
-            "exception": {"type": exc.type, "note": exc.note},
+            "exception": exception_info,
             "timezone": "UTC",
         })
 

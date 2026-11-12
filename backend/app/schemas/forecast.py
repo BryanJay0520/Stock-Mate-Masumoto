@@ -22,6 +22,7 @@ class CountConfidence(BaseModel):
 
 class IncomingDelivery(BaseModel):
     order_id: int
+    order_item_id: int
     supplier_id: int
     supplier_name: str
     status: str

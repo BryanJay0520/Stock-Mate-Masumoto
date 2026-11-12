@@ -52,6 +52,8 @@ SM.pages.suppliers = {
       }
     };
     await load();
+    const supplierId = new URLSearchParams(location.hash.split("?")[1] || "").get("supplier_id");
+    if (supplierId && /^\d+$/.test(supplierId)) await this.openDetail(supplierId);
   },
 
   renderList(card, suppliers, isAdmin, reload) {

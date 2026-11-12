@@ -72,6 +72,8 @@ SM.pages.orders = {
       }
     };
     await load();
+    const orderId = new URLSearchParams(location.hash.split("?")[1] || "").get("order_id");
+    if (orderId && /^\d+$/.test(orderId)) await this.openDetail(orderId, isAdmin, load);
   },
 
   renderList(card, orders, isAdmin, reload) {

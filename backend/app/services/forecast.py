@@ -155,10 +155,22 @@ def _walk(*, today, start, days, starting, config, trusted, uncertain, scenario,
             "first_pre_delivery_risk_date": next((row["date"] for row in rows if row["pre_delivery_shortage_risk"]), None)}
 
 
-def _summary(items):
+def uncertain_dependency(conservative, expected, safety, through=None):
+    return any(c["closing_balance"] is not None and e["closing_balance"] is not None and safety is not None
+               and (through is None or c["date"] <= through)
+               and ((c["closing_balance"] <= 0 < e["closing_balance"]) or
+                    (c["closing_balance"] < safety <= e["closing_balance"] and e["closing_balance"] > 0))
+               for c, e in zip([conservative["today"], *conservative["days"]], [expected["today"], *expected["days"]]))
+
+
+def summarize_forecast(items, through=None):
     rows = []
     for item in items:
-        conservative = item["conservative"]
+        conservative = dict(item["conservative"])
+        for field in ("first_shortage_date", "first_run_out_date", "first_low_date", "first_pre_delivery_risk_date"):
+            if through is not None and conservative[field] is not None and conservative[field] > through:
+                conservative[field] = None
+        depends = uncertain_dependency(item["conservative"], item["expected"], item["safety_stock"], through)
         missing = item["configuration_state"] in ("missing", "incomplete")
         disabled = item["configuration_state"] == "disabled"
         issues = []
@@ -166,13 +178,13 @@ def _summary(items):
         if conservative["first_low_date"]: issues.append("Below planning safety stock")
         if conservative["first_pre_delivery_risk_date"]: issues.append("Pre-delivery shortage risk")
         if item["confidence"]["stale"]: issues.append("Stale physical count")
-        if item["depends_on_uncertain"]: issues.append("Depends on uncertain incoming")
+        if depends: issues.append("Depends on uncertain incoming")
         if missing: issues.append("Missing or incomplete demand settings")
         if disabled: issues.append("Forecast disabled")
         if not item["ledger_consistent"]: issues.append("Ledger verification failed")
         rows.append({"ingredient_id": item["ingredient_id"], "ingredient_name": item["ingredient_name"],
                      **{field: conservative[field] for field in ("first_shortage_date", "first_run_out_date", "first_low_date", "first_pre_delivery_risk_date")},
-                     "stale_count": item["confidence"]["stale"], "depends_on_uncertain": item["depends_on_uncertain"],
+                     "stale_count": item["confidence"]["stale"], "depends_on_uncertain": depends,
                      "missing_demand": missing, "disabled": disabled, "issues": issues})
     dates = [row["first_shortage_date"] for row in rows if row["first_shortage_date"]]
     return {"configured_ingredients": sum(item["configuration_state"] == "enabled" for item in items),
@@ -189,7 +201,7 @@ def _summary(items):
 def generate_forecast(db: Session, *, settings: Settings, days: int = 7,
                       ingredient_id: int | None = None, now_utc: datetime | None = None,
                       remaining_usage_overrides: dict[int, Decimal] | None = None,
-                      override_business_date=None) -> dict:
+                      override_business_date=None, opportunities_by_supplier=None) -> dict:
     if days not in (7, 14, 30):
         raise ApiError(422, "invalid_horizon", "Forecast horizon must be 7, 14, or 30 days.")
     now = as_utc(now_utc or _now())
@@ -228,7 +240,7 @@ def generate_forecast(db: Session, *, settings: Settings, days: int = 7,
     exceptions = db.scalars(select(SupplierCalendarException).where(SupplierCalendarException.supplier_id.in_(supplier_ids), SupplierCalendarException.is_active.is_(True))).all()
     suppliers = {row.id: row for row in db.scalars(select(Supplier).where(Supplier.id.in_(supplier_ids)))}
     # Compute each supplier's cutoff calendar once, then share it across its ingredients.
-    opportunities = {sid: compute_opportunities(db, supplier_id=sid, now_utc=now,
+    opportunities = opportunities_by_supplier if opportunities_by_supplier is not None else {sid: compute_opportunities(db, supplier_id=sid, now_utc=now,
                      horizon_days=max(days + 7, 21), business_tz=settings.business_timezone)
                      for sid, supplier in suppliers.items() if supplier.status == "active"}
     incoming = defaultdict(list)
@@ -292,7 +304,7 @@ def generate_forecast(db: Session, *, settings: Settings, days: int = 7,
                 if not expected: excluded += pending
             if conservative: trusted[date] += pending
             elif expected: uncertain[date] += pending
-            delivery = {"order_id": order.id, "supplier_id": supplier.id, "supplier_name": supplier.name,
+            delivery = {"order_id": order.id, "order_item_id": line.id, "supplier_id": supplier.id, "supplier_name": supplier.name,
                         "status": order.status, "expected_date": date, "ordered_quantity": line.quantity_ordered,
                         "accepted_received_quantity": line.quantity_received, "outstanding_quantity": pending,
                         "conservative_eligible": conservative, "expected_eligible": expected,
@@ -320,10 +332,7 @@ def generate_forecast(db: Session, *, settings: Settings, days: int = 7,
         expected = _walk(today=today, start=start, days=days, starting=actual, config=config, trusted=trusted,
             uncertain=uncertain, scenario="expected", confidence=confidence["level"], baseline_valid=baseline_valid, today_usage=today_usage)
         safety = config.safety_stock if config else None
-        depends = any(c["closing_balance"] is not None and e["closing_balance"] is not None and safety is not None
-                      and ((c["closing_balance"] <= 0 < e["closing_balance"]) or
-                           (c["closing_balance"] < safety <= e["closing_balance"] and e["closing_balance"] > 0))
-                      for c, e in zip([conservative["today"], *conservative["days"]], [expected["today"], *expected["days"]]))
+        depends = uncertain_dependency(conservative, expected, safety)
         result.append({"ingredient_id": iid, "ingredient_name": ingredient.name, "unit": ingredient.unit.abbreviation,
                        "actual_available": actual, "cached_balance": state.current_quantity if state else None,
                        "ledger_balance": ledger_balance, "ledger_consistent": consistent,
@@ -342,4 +351,4 @@ def generate_forecast(db: Session, *, settings: Settings, days: int = 7,
                 "Arrival times are unknown. The closing projection includes eligible outstanding deliveries, while the pre-delivery balance deducts demand before incoming and exposes possible shortage risk. Scheduled stock is not physically available until received.",
                 "Negative projected balances carry cumulative unmet demand forward; they are not negative physical inventory.",
                 "Count confidence describes the as-of physical count, independently of availability. No future verification is assumed.",
-            ], "ingredients": result, "summary": _summary(result)}
+            ], "ingredients": result, "summary": summarize_forecast(result)}
