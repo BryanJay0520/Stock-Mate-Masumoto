@@ -2,7 +2,7 @@
 
 from datetime import date, datetime, time
 
-from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, String, Text, Time, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, Integer, String, Text, Time, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -68,7 +68,24 @@ class NotificationSetting(Base):
     forecast_shortage_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     verify_pending_order_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     pending_delivery_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    automatic_evaluation_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="0")
+    evaluation_interval_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=60, server_default="60")
     last_evaluated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class NotificationWorkerState(Base):
+    __tablename__ = "notification_worker_state"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    owner_token: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_failure_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error_code: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    last_result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 

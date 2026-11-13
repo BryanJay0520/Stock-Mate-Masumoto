@@ -28,7 +28,8 @@ from app.database import create_db_engine, create_session_factory
 from app.models import (
     AppSetting, AuditLog, DeliveryReceipt, DeliveryReceiptItem, Ingredient, IngredientDemandSetting,
     IngredientStockState, InventoryTransaction, PurchaseOrder,
-    PurchaseOrderItem, NotificationCountRule, NotificationEvent, NotificationUserState,
+    PurchaseOrderItem, NotificationCountRule, NotificationEvent, NotificationSetting,
+    NotificationUserState, NotificationWorkerState,
     Supplier, SupplierCalendarException,
     SupplierIngredient, SupplierScheduleRule, User,
 )
@@ -36,6 +37,7 @@ from app.seed import (
     DEMO_INGREDIENTS, DEMO_SUPPLIERS, FICTION_NOTE, ORDER_SEED_MARKER_KEY,
     SCHEDULE_SEED_MARKER_KEY, SEED_MARKER_KEY, seed_demo_data,
 )
+from app.services.confidence import as_utc
 
 CONFIRMATION = "RESET_FICTIONAL_STOCKMATE_DATA"
 DEMO_MARKERS = (SEED_MARKER_KEY, SCHEDULE_SEED_MARKER_KEY, ORDER_SEED_MARKER_KEY)
@@ -87,6 +89,13 @@ def verify_demo_dataset(session: Session) -> dict[str, int]:
     ).all()
     if other_audits:
         raise ValueError("Unknown audit entities exist; refusing the reset.")
+    notification_policy = session.get(NotificationSetting, 1)
+    if notification_policy and notification_policy.automatic_evaluation_enabled:
+        raise ValueError("Disable automatic notification evaluation before a demo reset.")
+    worker = session.get(NotificationWorkerState, 1)
+    if (worker and worker.owner_token and worker.lease_expires_at and
+            as_utc(worker.lease_expires_at) > datetime.now(timezone.utc)):
+        raise ValueError("A notification worker lease is active; stop the worker before a demo reset.")
     revision = session.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
     from app.db_admin import BACKEND_DIR
     config = Config(str(BACKEND_DIR / "alembic.ini"))
@@ -122,6 +131,7 @@ def remove_demo_operations(session: Session) -> None:
     """Delete dependent demo rows in FK order without touching auth or schema."""
     # Notices reference demo ingredients, suppliers and orders. Preserve the
     # administrator's notification_settings but clear ingredient applicability.
+    session.execute(delete(NotificationWorkerState))
     session.execute(delete(NotificationUserState))
     session.execute(delete(NotificationEvent))
     session.execute(delete(NotificationCountRule))

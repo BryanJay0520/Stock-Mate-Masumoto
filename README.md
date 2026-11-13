@@ -3,15 +3,15 @@
 Smart restaurant inventory management and supply planning system.
 Web-based, mobile-ready, designed initially for a ramen restaurant.
 
-🚧 **Work in Progress — Phase 4 Step 1 in-app notifications implemented**
+🚧 **Work in Progress — Phase 4 Step 2 automatic in-app evaluation complete**
 
 The responsive web UI includes login, dashboard, inventory, package-aware
 daily stock entry, supplier and ingredient management, purchase orders and
 delivery receiving, transaction history with corrections, and account
 settings, editable ingredient demand estimates, and a read-only Forecast Calendar.
 Order Planner provides advisory purchasing quantities and supplier deadlines.
-The in-app Notification Center stores explicitly evaluated tasks and risks.
-Automatic ordering, background evaluation and external messages are future work.
+The in-app Notification Center stores automatically or manually evaluated tasks
+and risks. Automatic ordering, app/device push, email and LINE are future work.
 
 ## What it does (planned)
 
@@ -22,7 +22,8 @@ Automatic ordering, background evaluation and external messages are future work.
 - Stock Confidence Indicator (how trustworthy the current numbers are)
 - Explicit in-app reminders and alerts (daily counts, order deadlines, supplier
   contact, forecast shortages, uncertain orders and deliveries)
-- Future scheduled evaluation and external delivery (browser push, email, LINE)
+- Separately launched automatic in-app evaluation; future external delivery
+  (browser push, email, LINE)
 - Role-based access: **Administrator** and **Staff**
 
 ## Counting full packages and loose stock
@@ -42,7 +43,7 @@ are configured separately through the admin API and drive Order Planner advice.
 
 - **Backend:** Python, FastAPI, SQLAlchemy, Pydantic, Alembic, SQLite (dev) → PostgreSQL (prod)
 - **Frontend:** HTML5, CSS3, vanilla JavaScript, responsive mobile-first (served by FastAPI)
-- **Scheduler:** deferred; explicit notification evaluation is available now
+- **Scheduler:** separately launched, database-coordinated notification worker
 - **Tests:** pytest
 - **Mobile readiness:** versioned REST API (`/api/v1`), all business logic server-side; PWA and Capacitor packaging planned for later phases
 
@@ -74,9 +75,36 @@ Run the application (from a WSL terminal, e.g. VS Code's WSL terminal):
 
 ```bash
 cd /mnt/c/Users/bryan/Projects/StockMate/backend
-~/.venvs/stockmate/bin/python -m app.seed                # one-time: migrate + fictional demo data
+~/.venvs/stockmate/bin/python -m app.seed                # only for a fresh fictional demo database
 ~/.venvs/stockmate/bin/python -m uvicorn app.main:app --reload
 ```
+
+For an existing database, apply migrations without reseeding it:
+
+```bash
+cd /mnt/c/Users/bryan/Projects/StockMate/backend
+~/.venvs/stockmate/bin/python -m alembic upgrade head
+```
+
+Automatic notifications require a **second WSL terminal** after migration.
+The web server and worker must use the same `STOCKMATE_DATABASE_URL` and
+`STOCKMATE_ENVIRONMENT` values (or the same default development database when
+both are unset). Check both terminals before starting the worker so it never
+evaluates a different database.
+In Settings / Account, an administrator enables automatic evaluation and
+selects the interval. Then run:
+
+```bash
+cd /mnt/c/Users/bryan/Projects/StockMate/backend
+~/.venvs/stockmate/bin/python -m app.notification_worker
+```
+
+Stop the worker with **Ctrl+C**; SIGTERM also releases its lease. If it crashes,
+the database lease expires after 180 seconds so another worker can take over.
+The web app stays usable while it is stopped. Starting Uvicorn or opening a
+browser never starts a worker. The default automatic setting is off. A worker
+may be launched while disabled; it then heartbeats without evaluating until an
+administrator enables it. The worker has no stored browser login or password.
 
 Then open:
 
@@ -86,7 +114,8 @@ Then open:
 
 ### Reset fictional development data
 
-Stop the local StockMate server first. This command accepts only the exact
+Stop the local StockMate server and notification worker first, and disable
+automatic evaluation in Settings. This command accepts only the exact
 `backend/stockmate.db` path in the default `development` environment, with no
 database URL override or `.env` file. It verifies the fictional seed markers,
 demo catalog, accounts, migration head, and foreign keys, then creates a
@@ -133,18 +162,21 @@ test_dir=$(mktemp -d /tmp/stockmate-browsertest-XXXXXX)
 STOCKMATE_DATABASE_URL="sqlite:///$test_dir/demo.db" ~/.venvs/stockmate/bin/python -m app.seed
 STOCKMATE_DATABASE_URL="sqlite:///$test_dir/demo.db" ~/.venvs/stockmate/bin/python -m uvicorn app.main:app --port 8765
 
-# In a Windows terminal (repo root), while the server runs:
+# In a Windows PowerShell terminal (repo root), while the server runs:
+$env:STOCKMATE_TEST_DATABASE_URL = "sqlite:////tmp/stockmate-browsertest-XXXXXX/demo.db" # copy the actual test_dir
 node frontend/tests/browser_smoke.mjs
 ```
 
 Screenshots are saved to a temp directory whose path is printed at the end.
 
-## In-app notifications (Phase 4 Step 1)
+## In-app notifications (Phase 4 Steps 1–2)
 
-Open **Notifications** from the sidebar or the bell. Select **Refresh tasks**
-to explicitly evaluate current inventory, supplier and forecast conditions.
-Opening the page, bell or dashboard does not generate records; each shows the
-last evaluation time and warns when the snapshot is over an hour old. The full
+Open **Notifications** from the sidebar or the bell. **Refresh tasks** remains
+an explicit manual evaluation action. When automatic evaluation is enabled and
+the separate worker is running, it checks conditions without a browser session.
+Opening the page, bell or dashboard does not generate records. The app reads
+updated notices about once a minute while visible and warns when the last
+evaluation snapshot is over an hour old. The full
 page has All, Unread, Urgent and Resolved/history filters, pagination, read and
 acknowledgement controls, and links to the existing workflows. Reading or
 acknowledging a notice does not complete its restaurant task. A shared login
@@ -155,8 +187,14 @@ specific ingredients that require a daily physical count under **Settings /
 Account**. The default time is 21:30 in the configured business timezone;
 no ingredients are selected automatically. Used Stock entries and delivery
 receipts do not satisfy a physical-count reminder. Staff can see and refresh
-notifications but cannot change settings. This step sends no external messages
-and runs no background scheduler. Migration head is `0009_notification_center`.
+notifications but cannot change settings. Automatic evaluation defaults off;
+its interval defaults to 60 seconds and may be set from 60 to 900 seconds.
+The interval is a check frequency, not a change to the reminder time: a 21:30
+reminder appears on the first successful check at or after 21:30. Settings
+shows a separate worker status, heartbeat, attempt, success, failure and last
+result. A recent heartbeat and valid lease are needed for Running status;
+Enabled alone does not prove the worker is running. This step sends no
+external messages. Migration head is `0010_notification_scheduler`.
 
 ## Ingredient forecast settings
 

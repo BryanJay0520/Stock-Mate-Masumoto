@@ -1,4 +1,4 @@
-// Persistent in-app notices. Reading never evaluates conditions or resolves work.
+// Persistent in-app notices. Reads never evaluate conditions or resolve work.
 window.SM = window.SM || {};
 SM.pages = SM.pages || {};
 
@@ -79,7 +79,8 @@ SM.notificationUI = {
   },
   async dashboardCard() {
     const ui = SM.ui;
-    const card = ui.el("section", {class: "card"}, ui.el("h2", {class: "card__title", text: "Notifications / Action Required"}));
+    const card = ui.el("section", {class: "card", "data-notification-dashboard": ""},
+      ui.el("h2", {class: "card__title", text: "Notifications / Action Required"}));
     try {
       const page = await SM.api.get("/notifications?limit=6");
       card.append(ui.el("p", {class: "field__hint", text: this.evaluatedLabel(page.evaluated_at)}));
@@ -98,6 +99,10 @@ SM.notificationUI = {
       card.append(ui.alert(error.message), ui.el("a", {href: "#/notifications", text: "Open Notifications to retry →"}));
     }
     return card;
+  },
+  async refreshDashboard() {
+    const current = document.querySelector("[data-notification-dashboard]");
+    if (current) current.replaceWith(await this.dashboardCard());
   },
 };
 
@@ -167,6 +172,7 @@ SM.pages.notifications = {
       catch (error) { ui.clear(feedback).append(ui.alert(error.message)); }
       finally { markAll.disabled = false; }
     });
+    this.refreshCurrent = load;
     await load();
   },
 };

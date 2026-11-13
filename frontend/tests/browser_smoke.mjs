@@ -24,6 +24,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const BASE = process.env.STOCKMATE_TEST_URL || "http://127.0.0.1:8765";
+const TEST_DB_URL = process.env.STOCKMATE_TEST_DATABASE_URL;
 const CHROME = process.env.CHROME_PATH
   || "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
 const CDP_PORT = 9223;
@@ -142,6 +143,21 @@ async function assertText(selector, expected, message) {
 async function apiAsSession(path) {
   // Uses the browser's current session cookie, exactly like the SPA does.
   return evaluate(`fetch("${BASE}/api/v1${path}", {credentials: "same-origin"}).then(r => r.json())`);
+}
+
+async function runIsolatedWorkerOnce() {
+  if (!TEST_DB_URL) throw new Error("STOCKMATE_TEST_DATABASE_URL is required for worker browser coverage");
+  return new Promise((resolve, reject) => {
+    const child = spawn("wsl", ["-e", "env",
+      "PYTHONPATH=/mnt/c/Users/bryan/Projects/StockMate/backend",
+      `STOCKMATE_DATABASE_URL=${TEST_DB_URL}`, "STOCKMATE_ENVIRONMENT=test",
+      "/home/bryanjay/.venvs/stockmate/bin/python", "-m", "app.notification_worker", "--once"],
+      {stdio: ["ignore", "ignore", "pipe"]});
+    let stderr = "";
+    child.stderr.on("data", chunk => { stderr = (stderr + chunk.toString()).slice(-1500); });
+    child.on("error", reject);
+    child.on("close", code => code === 0 ? resolve() : reject(new Error(`Worker exited ${code}: ${stderr}`)));
+  });
 }
 
 // --- Boot -------------------------------------------------------------------
@@ -1377,6 +1393,43 @@ async function notificationTests() {
     await evaluate(`document.getElementById("notification-bell").open=true`);
     assert(await evaluate(`document.documentElement.scrollWidth-window.innerWidth<=1`), "notification bell overflows phone");
     await screenshot("notifications-bell-390");
+    await setViewport(1440);
+  });
+  if (TEST_DB_URL) await test("separate worker updates the open notification page without browser generation", async () => {
+    await navigate("/settings");
+    await waitFor(`document.getElementById("notification-automatic")`);
+    await evaluate(`(() => {
+      document.getElementById("notification-automatic").checked = true;
+      for (const label of document.querySelectorAll(".notification-count-scope .notification-check"))
+        if (label.textContent.includes("Eggs")) label.querySelector("input").checked = true;
+      document.querySelector(".notification-settings-grid").closest("form").querySelector("button[type=submit]").click();
+    })()`);
+    await waitFor(`document.querySelector("#view").textContent.includes("Notification settings saved")`);
+    const notices = (await apiAsSession("/notifications?view=all&limit=100")).items;
+    const index = notices.findIndex(item => item.id === dailyNoticeId);
+    assert(index >= 0, "existing daily reminder missing before worker run");
+    await navigate(`/notifications?offset=${Math.floor(index / 10) * 10}`);
+    await waitFor(`document.querySelector("#view").textContent.includes("Complete today's inventory counts")`);
+    await runIsolatedWorkerOnce();
+    await evaluate(`SM.app.refreshNotificationReads()`);
+    await waitFor(`[...document.querySelectorAll(".notification-card")].some(c =>
+      c.textContent.includes("Complete today's inventory counts") && c.textContent.includes("Eggs"))`);
+    const changed = (await apiAsSession("/notifications?view=all&limit=100")).items.find(item => item.id === dailyNoticeId);
+    assert(changed.message.includes("Eggs") && changed.read_at === null,
+      "worker did not update notice or reset read state after material change");
+    const health = await apiAsSession("/notifications/scheduler-health");
+    assert(health.last_success_at && health.status === "stopped", "worker success or stopped status missing");
+    await navigate("/settings");
+    await waitFor(`document.getElementById("notification-automatic")`);
+    await evaluate(`document.querySelector("#view button") && [...document.querySelectorAll("#view button")].find(b => b.textContent === "Refresh worker status").click()`);
+    await waitFor(`document.querySelector("#view").textContent.includes("Worker status: stopped")`);
+    await assertText("#view", "Last success:");
+    await evaluate(`document.getElementById("notification-automatic").scrollIntoView({block: "center"})`);
+    await screenshot("scheduler-settings-desktop");
+    await setViewport(390);
+    await evaluate(`document.getElementById("notification-automatic").scrollIntoView({block: "center"})`);
+    assert(await evaluate(`document.documentElement.scrollWidth-window.innerWidth<=1`), "scheduler settings overflow phone");
+    await screenshot("scheduler-settings-390");
     await setViewport(1440);
   });
 }

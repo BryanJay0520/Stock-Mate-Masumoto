@@ -66,7 +66,7 @@ def login(client, role="admin"):
 def test_notification_migration_preserves_operational_data(setup):
     client = setup[0]
     with client.app.state.db_engine.connect() as conn:
-        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0009_notification_center"
+        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0010_notification_scheduler"
         tables = {r[0] for r in conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))}
         assert {"notification_events", "notification_user_states", "notification_settings", "notification_count_rules"} <= tables
         assert conn.execute(text("PRAGMA foreign_key_check")).all() == []

@@ -18,7 +18,7 @@ from app.config import Settings
 from app.database import set_write_intent
 from app.errors import ApiError
 from app.models import (Ingredient, InventoryTransaction, NotificationCountRule,
-                        NotificationEvent, NotificationSetting, NotificationUserState,
+                        NotificationEvent, NotificationSetting, NotificationUserState, NotificationWorkerState,
                         PurchaseOrder, PurchaseOrderItem, Supplier, SupplierIngredient)
 from app.models.inventory import MODE_REMAINING, TYPE_RECONCILIATION
 from app.models.ordering import OPEN_ORDER_STATUSES
@@ -37,6 +37,10 @@ TYPE_ORDER = {"forecast_shortage": 0, "order_cutoff": 1, "supplier_contact": 2,
 ACTIVE = "active"
 
 
+class WorkerLeaseLost(RuntimeError):
+    """A worker may not evaluate after another process owns its lease."""
+
+
 def _utc(now):
     return as_utc(now or datetime.now(timezone.utc))
 
@@ -50,6 +54,8 @@ def _setting_view(db):
     enabled = {name: getattr(row, name) if row else True for name in SETTING_FIELDS}
     ids = db.scalars(select(NotificationCountRule.ingredient_id).where(NotificationCountRule.enabled.is_(True)).order_by(NotificationCountRule.ingredient_id)).all()
     return {**enabled, "daily_count_time": (row.daily_count_time if row else DEFAULT_TIME),
+            "automatic_evaluation_enabled": row.automatic_evaluation_enabled if row else False,
+            "evaluation_interval_seconds": row.evaluation_interval_seconds if row else 60,
             "daily_count_ingredient_ids": list(ids)}
 
 
@@ -58,28 +64,37 @@ def get_settings(db):
 
 
 def update_settings(db, data):
+    if "evaluation_interval_seconds" in data and not 60 <= data["evaluation_interval_seconds"] <= 900:
+        raise ApiError(422, "invalid_evaluation_interval", "Choose an interval from 60 to 900 seconds.")
     now = _utc(None)
-    row = db.get(NotificationSetting, 1)
-    if row is None:
-        row = NotificationSetting(id=1, daily_count_time=DEFAULT_TIME, updated_at=now,
-                                  **{name: True for name in SETTING_FIELDS})
-        db.add(row)
-    for name in (*SETTING_FIELDS, "daily_count_time"):
-        if name in data:
-            setattr(row, name, data[name])
-    if "daily_count_ingredient_ids" in data:
-        ids = set(data["daily_count_ingredient_ids"])
-        existing = set(db.scalars(select(Ingredient.id).where(Ingredient.id.in_(ids), Ingredient.status == "active")).all())
-        if ids != existing:
-            raise ApiError(422, "invalid_count_ingredient", "Select active ingredients for count reminders.")
-        rules = {r.ingredient_id: r for r in db.scalars(select(NotificationCountRule)).all()}
-        for iid in ids | set(rules):
-            if iid in rules:
-                rules[iid].enabled = iid in ids
-            else:
-                db.add(NotificationCountRule(ingredient_id=iid, enabled=True))
-    row.updated_at = now
-    db.commit()
+    set_write_intent(True)
+    try:
+        row = db.get(NotificationSetting, 1)
+        if row is None:
+            row = NotificationSetting(id=1, daily_count_time=DEFAULT_TIME, updated_at=now,
+                                      **{name: True for name in SETTING_FIELDS})
+            db.add(row)
+        for name in (*SETTING_FIELDS, "daily_count_time", "automatic_evaluation_enabled", "evaluation_interval_seconds"):
+            if name in data:
+                setattr(row, name, data[name])
+        if "daily_count_ingredient_ids" in data:
+            ids = set(data["daily_count_ingredient_ids"])
+            existing = set(db.scalars(select(Ingredient.id).where(Ingredient.id.in_(ids), Ingredient.status == "active")).all())
+            if ids != existing:
+                raise ApiError(422, "invalid_count_ingredient", "Select active ingredients for count reminders.")
+            rules = {r.ingredient_id: r for r in db.scalars(select(NotificationCountRule)).all()}
+            for iid in ids | set(rules):
+                if iid in rules:
+                    rules[iid].enabled = iid in ids
+                else:
+                    db.add(NotificationCountRule(ingredient_id=iid, enabled=True))
+        row.updated_at = now
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        set_write_intent(False)
     return _setting_view(db)
 
 
@@ -294,7 +309,7 @@ def _persist(db, candidates, now, today, policy, unknown_shortage, unknown_order
     for event in existing:
         by_condition.setdefault(event.condition_key, []).append(event)
     desired = {row["condition_key"]: row for row in candidates}
-    created = updated = transitioned = 0
+    created = updated = transitioned = resolved = expired = superseded = 0
     for key, candidate in desired.items():
         episodes = by_condition.get(key, [])
         active = next((row for row in reversed(episodes) if row.status == ACTIVE), None)
@@ -357,14 +372,36 @@ def _persist(db, candidates, now, today, policy, unknown_shortage, unknown_order
         event.resolved_at = now if event.status == "resolved" else None
         event.updated_at = now
         transitioned += 1
-    return {"created": created, "updated": updated, "transitioned": transitioned}
+        if event.status == "resolved":
+            resolved += 1
+        elif event.status == "expired":
+            expired += 1
+        elif event.status == "superseded":
+            superseded += 1
+    return {"created": created, "updated": updated, "transitioned": transitioned,
+            "resolved": resolved, "expired": expired, "superseded": superseded}
 
 
-def _evaluate_once(db: Session, *, settings: Settings, now_utc=None):
+def _evaluate_once(db: Session, *, settings: Settings, now_utc=None,
+                   worker_owner_token=None, minimum_interval_seconds=None):
     now = _utc(now_utc)
     set_write_intent(True)
     try:
         policy = _setting_view(db)
+        if worker_owner_token is not None:
+            worker = db.get(NotificationWorkerState, 1)
+            if (worker is None or worker.owner_token != worker_owner_token or
+                    worker.lease_expires_at is None or as_utc(worker.lease_expires_at) <= now):
+                raise WorkerLeaseLost("Worker lease is no longer owned by this process.")
+            setting_row = db.get(NotificationSetting, 1)
+            if setting_row is None or not setting_row.automatic_evaluation_enabled:
+                db.rollback()
+                return None
+            interval = minimum_interval_seconds or setting_row.evaluation_interval_seconds
+            if (worker.last_success_at is not None and setting_row.last_evaluated_at is not None and
+                    now < as_utc(setting_row.last_evaluated_at) + timedelta(seconds=interval)):
+                db.rollback()
+                return None
         today = business_date_for(now, settings.business_timezone, parse_day_start(settings.business_day_start_time))
         candidates = []
         count = _daily_count(db, now, settings, policy, today)
@@ -412,12 +449,15 @@ def _evaluate_once(db: Session, *, settings: Settings, now_utc=None):
         set_write_intent(False)
 
 
-def evaluate(db: Session, *, settings: Settings, now_utc=None):
+def evaluate(db: Session, *, settings: Settings, now_utc=None,
+             worker_owner_token=None, minimum_interval_seconds=None):
     """A concurrent writer may win the unique-key insert; retry the full snapshot."""
     now = _utc(now_utc)
     for attempt in range(3):
         try:
-            return _evaluate_once(db, settings=settings, now_utc=now)
+            return _evaluate_once(db, settings=settings, now_utc=now,
+                                  worker_owner_token=worker_owner_token,
+                                  minimum_interval_seconds=minimum_interval_seconds)
         except (IntegrityError, OperationalError):
             if attempt == 2:
                 raise

@@ -109,6 +109,9 @@ show disabled fields and an explicit staff access explanation.
 Notification Settings reuse native checkboxes and time input in the existing
 administrator Settings page. The count applicability list names real active
 ingredients; no count schedule is implied by merely adding an ingredient.
+The worker controls reuse that card's native checkbox/select and plain status
+text. Enabled, running, stopped and error are distinct words; timestamps and
+last-result counts stay readable in one column on a phone.
 
 ## Do's and Don'ts
 

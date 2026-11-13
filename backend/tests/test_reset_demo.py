@@ -11,7 +11,7 @@ from app.config import Settings
 from app.models import (
     AuditLog, DeliveryReceipt, DeliveryReceiptItem, Ingredient, IngredientDemandSetting,
     InventoryTransaction, NotificationCountRule, NotificationEvent, NotificationSetting,
-    NotificationUserState, PurchaseOrder, Supplier, Unit, User, UserSession,
+    NotificationUserState, NotificationWorkerState, PurchaseOrder, Supplier, Unit, User, UserSession,
 )
 from app.reset_demo import (
     CONFIRMATION, backup_database, remove_demo_operations, verify_demo_dataset,
@@ -81,6 +81,7 @@ def test_reset_reseeds_after_receiving_without_losing_auth_or_migrations(
         db.flush()
         notice_id = db.scalar(select(NotificationEvent.id).where(NotificationEvent.dedupe_key == "reset-demo-notice"))
         db.add(NotificationUserState(notification_id=notice_id, user_id=1, read_at=stamp))
+        db.add(NotificationWorkerState(id=1, owner_token=None, heartbeat_at=stamp, updated_at=stamp))
         db.flush()
         migration_before = db.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
         accounts = {u.username: (u.id, u.password_hash) for u in db.scalars(select(User))}
@@ -103,11 +104,12 @@ def test_reset_reseeds_after_receiving_without_losing_auth_or_migrations(
         assert db.scalar(select(func.count(NotificationEvent.id))) == 0
         assert db.scalar(select(func.count(NotificationUserState.id))) == 0
         assert db.scalar(select(func.count(NotificationCountRule.ingredient_id))) == 0
+        assert db.get(NotificationWorkerState, 1) is None
         assert db.get(NotificationSetting, 1).daily_count_time == time(21, 30)
         assert db.scalar(select(func.count(AuditLog.id))) == 0
         assert db.scalar(select(func.count(InventoryTransaction.id))) == 8
         assert db.scalar(select(func.count(Supplier.id))) == 3
-        assert db.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == migration_before == "0009_notification_center"
+        assert db.execute(text("SELECT version_num FROM alembic_version")).scalar_one() == migration_before == "0010_notification_scheduler"
         korean = db.scalar(select(Ingredient).where(Ingredient.name == "Korean Noodles"))
         assert korean.unit.abbreviation == "pc"
         assert korean.count_units_per_package == Decimal("60")

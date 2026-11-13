@@ -102,3 +102,15 @@ active notices. Empty states are specific to each filter. Network failures
 clear stale content and leave a retry path. Admin-only Settings controls
 category flags, count time and count ingredient applicability; a save never
 silently evaluates conditions or contacts a supplier.
+
+Phase 4 Step 2 adds automatic evaluation through a separately launched worker.
+The Settings control only enables it and selects a 60–900-second interval;
+Enabled never claims the process is Running. Administrator status reads an
+unexpired lease and recent heartbeat, shows attempts, success, failure and
+next expected check, and has an explicit read-only Refresh worker status
+button. Staff retain the same operational inbox without health details or
+settings edits. Manual Refresh tasks remains available. While visible, the app
+polls the bell and current dashboard/inbox once a minute using GET requests;
+hidden tabs do not poll, and no browser tab evaluates business conditions.
+An unavailable worker leaves existing notices readable with their last
+evaluation time and stale warning. No push or external message is sent.

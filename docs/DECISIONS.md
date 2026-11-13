@@ -111,18 +111,16 @@ An order placed at exactly the cutoff instant counts as on time
 (`placed_at <= cutoff` compared as UTC instants). Deadlines are classified as
 `upcoming` / `covered` / `missed` / `expired` — computed, never stored.
 
-## D17 — APScheduler 3.x, single process
+## D17 — Dedicated notification worker (revised in Phase 4 Step 2)
 
-Deferred after Phase 4 Step 1. The implemented notification evaluator has no
-startup or background job. Future scheduler work must reuse that evaluator and
-define catch-up/delivery semantics before enabling any automatic dispatch.
-
-Pin `apscheduler>=3.10,<4` with a SQLAlchemy job store. The scheduler runs
-inside the single FastAPI process for MVP (`coalesce=True`, `max_instances=1`,
-`misfire_grace_time` set). Startup catch-up dispatches overdue pending events;
-unique `dedupe_key`s make replays harmless. Scale-out path: web workers
-without scheduler + exactly one dedicated scheduler process
-(`SCHEDULER_ENABLED=true`); DB leader-election only if ever needed.
+The earlier APScheduler/in-process proposal is superseded. A separate explicit
+`python -m app.notification_worker` command runs a single-threaded polling loop;
+FastAPI startup and browser tabs never launch it. No scheduler dependency or
+additional infrastructure is needed. The administrator setting defaults off;
+the worker and the setting must both be active before automatic evaluation.
+The default 60-second interval may be set from 60 to 900 seconds. A worker
+checks every 30 seconds for enable/interval changes and records a heartbeat.
+The business reminder times remain independently configured.
 
 ## D18 — Configurable business-day boundary
 
@@ -614,3 +612,33 @@ two days overdue or flagged delayed high. Other notices are normal. Contact
 reminders begin 24 hours before the required deadline. The UI labels an
 evaluation older than one hour as a stale snapshot. These thresholds can
 become administrator settings later if restaurant workflow requires it.
+
+## D44 — Persistent worker lease and catch-up policy (Phase 4 Step 2)
+
+Migration `0010_notification_scheduler` adds two columns to the singleton
+notification settings (automatic evaluation defaults off; interval defaults
+60 seconds) and a singleton worker-state table. A dedicated process claims a
+180-second owner-token lease in a short SQLite `BEGIN IMMEDIATE` transaction,
+refreshes heartbeat every 30 seconds, and checks ownership again inside the
+existing evaluator's write-intent transaction. A stale owner cannot start an
+evaluation after takeover. SQLite serializes manual and worker evaluations;
+unique event keys remain the independent duplicate-prevention boundary. A
+crash rolls back evaluation and the lease expires for takeover. This is
+retryable at-least-once evaluation, not an exactly-once execution guarantee.
+
+The worker evaluates once on launch when enabled, then at the configured
+interval, with manual refresh able to postpone a subsequent automatic check.
+It never replays every missed interval. A current-day count missed at 21:30
+is still actionable at 22:00; prior business dates are not reconstructed.
+Expired supplier cutoffs/contact deadlines are not generated as new actionable
+orders on recovery; previously recorded events expire, and the existing
+scheduling engine determines the next valid cycle. Missing forecast data does
+not prove resolution. Worker attempts, successes, failures, and last counts are
+persistent. The admin health view derives running from a fresh heartbeat and
+unexpired lease, never from the enabled setting alone. Failures back off
+30/60/120/240/300 seconds, retaining the last success. Graceful shutdown
+releases ownership; unexpected death relies on lease expiry.
+
+Email and LINE remain optional future channels. Step 3 is app/device push
+notifications. Step 2 only maintains in-app records and performs no external
+delivery, supplier action, order mutation, receipt, or ledger write.

@@ -9,7 +9,7 @@ from app.models.audit import AuditLog
 from app.models.demand import IngredientDemandSetting
 from app.models.ingredient import Ingredient, IngredientStockState
 from app.models.inventory import InventoryTransaction
-from app.models.notification import NotificationCountRule, NotificationEvent, NotificationSetting, NotificationUserState
+from app.models.notification import NotificationCountRule, NotificationEvent, NotificationSetting, NotificationUserState, NotificationWorkerState
 from app.models.ordering import PurchaseOrder, PurchaseOrderItem
 from app.models.receiving import DeliveryReceipt, DeliveryReceiptItem
 from app.models.scheduling import SupplierCalendarException, SupplierScheduleRule
@@ -31,6 +31,7 @@ __all__ = [
     "NotificationEvent",
     "NotificationSetting",
     "NotificationUserState",
+    "NotificationWorkerState",
     "DeliveryReceipt",
     "DeliveryReceiptItem",
     "PurchaseOrder",

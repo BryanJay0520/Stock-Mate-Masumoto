@@ -8,8 +8,9 @@ from app.database import get_db
 from app.errors import ApiError
 from app.models import User
 from app.schemas.notifications import (EvaluationOut, NotificationOut, NotificationPage,
-                                       NotificationSettingsOut, NotificationSettingsUpdate, NotificationView)
-from app.services import notifications
+                                       NotificationSettingsOut, NotificationSettingsUpdate, NotificationView,
+                                       SchedulerHealthOut)
+from app.services import notification_scheduler, notifications
 
 router = APIRouter(prefix="/notifications")
 
@@ -29,6 +30,11 @@ def unread_count(user: User = Depends(get_current_user), db: Session = Depends(g
 @router.get("/settings", response_model=NotificationSettingsOut)
 def settings(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     return notifications.get_settings(db)
+
+
+@router.get("/scheduler-health", response_model=SchedulerHealthOut)
+def scheduler_health(admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    return notification_scheduler.health(db)
 
 
 @router.patch("/settings", response_model=NotificationSettingsOut, dependencies=[Depends(csrf_protect)])

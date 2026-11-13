@@ -49,7 +49,7 @@ SM.pages.settings = {
     const ui = SM.ui;
     const card = ui.el("section", {class: "card"},
       ui.el("h2", {class: "card__title", text: "Notification Settings (Administrator)"}),
-      ui.el("p", {class: "field__hint", text: "In-app notifications are created only when someone selects Refresh tasks in Notifications. No background or external messages are sent."}));
+      ui.el("p", {class: "field__hint", text: "Manual Refresh tasks remains available. Automatic checks require this setting and a separately running worker. No external messages are sent."}));
     view.append(card);
     try {
       const [settings, catalog] = await Promise.all([SM.api.get("/notifications/settings"), SM.data.catalog()]);
@@ -71,6 +71,43 @@ SM.pages.settings = {
       }
       const dailyTime = ui.el("input", {class: "input", id: "notification-daily-time", type: "time",
         value: settings.daily_count_time.slice(0, 5)});
+      const automatic = ui.el("input", {type: "checkbox", id: "notification-automatic",
+        checked: settings.automatic_evaluation_enabled});
+      const interval = ui.el("select", {class: "select", id: "notification-interval"},
+        ...[[60, "Every minute"], [300, "Every 5 minutes"], [600, "Every 10 minutes"],
+          [900, "Every 15 minutes"]].map(([seconds, label]) =>
+          ui.el("option", {value: String(seconds), text: label})));
+      if (![60, 300, 600, 900].includes(settings.evaluation_interval_seconds)) {
+        interval.append(ui.el("option", {value: String(settings.evaluation_interval_seconds),
+          text: `Current: every ${settings.evaluation_interval_seconds} seconds`}));
+      }
+      interval.value = String(settings.evaluation_interval_seconds);
+      const workerStatus = ui.el("div", {role: "status", "aria-live": "polite"});
+      const statusButton = ui.el("button", {type: "button", class: "btn btn--secondary btn--small",
+        text: "Refresh worker status"});
+      const showStatus = async () => {
+        try {
+          const health = await SM.api.get("/notifications/scheduler-health");
+          const fmt = value => value ? ui.formatDateTime(value) : "Never";
+          const latest = health.last_result;
+          ui.clear(workerStatus).append(
+            ui.el("p", {text: `Worker status: ${health.status}. Enabled: ${health.automatic_evaluation_enabled ? "Yes" : "No"}. Interval: ${health.evaluation_interval_seconds / 60} minute(s).`}),
+            ui.el("p", {class: "text-muted text-small", text: `Heartbeat: ${fmt(health.heartbeat_at)}. Last attempt: ${fmt(health.last_attempt_at)}. Last success: ${fmt(health.last_success_at)}. Next eligible check (if running): ${fmt(health.next_expected_evaluation_at)}.`}),
+            health.last_failure_at ? ui.el("p", {class: "text-muted text-small", text: `Last failure: ${fmt(health.last_failure_at)} (${health.last_error_code || "unknown error"}).`}) : "",
+            latest ? ui.el("p", {class: "text-muted text-small", text: `Latest result: ${latest.created} new, ${latest.updated} updated, ${latest.resolved} resolved, ${latest.expired} expired.`}) : "",
+          );
+        } catch (error) { ui.clear(workerStatus).append(ui.alert(error.message)); }
+      };
+      statusButton.addEventListener("click", showStatus);
+      const scheduler = ui.el("fieldset", {class: "notification-count-scope"},
+        ui.el("legend", {text: "Automatic notification checks"}),
+        ui.el("label", {class: "notification-check", for: automatic.id}, automatic,
+          ui.el("span", {text: "Enable automatic evaluation when the worker is running"})),
+        ui.el("div", {class: "field"},
+          ui.el("label", {class: "field__label", for: interval.id, text: "Check interval"}), interval,
+          ui.el("span", {class: "field__hint", text: "The worker checks at this interval. A 21:30 reminder appears on the first successful check at or after 21:30, not exactly to the second."})),
+        ui.el("p", {class: "field__hint", text: "Enabled does not mean running. The worker must be launched separately; staff can still use manual Refresh tasks if it is stopped."}),
+        statusButton, workerStatus);
       const ingredients = ui.el("fieldset", {class: "notification-count-scope"},
         ui.el("legend", {text: "Ingredients requiring daily physical counts"}),
         ui.el("p", {class: "field__hint", text: "Select only ingredients whose daily count is required. Used Stock entries and receipts do not complete a physical count."}));
@@ -86,7 +123,7 @@ SM.pages.settings = {
       form.append(options, ui.el("div", {class: "field"},
         ui.el("label", {class: "field__label", for: "notification-daily-time", text: "Daily inventory reminder time"}),
         dailyTime, ui.el("span", {class: "field__hint", text: "Business timezone: Asia/Tokyo by default. The configured business timezone applies."})),
-        ingredients, feedback, save);
+        ingredients, scheduler, feedback, save);
       form.addEventListener("submit", async event => {
         event.preventDefault();
         ui.clear(feedback);
@@ -100,12 +137,16 @@ SM.pages.settings = {
           const payload = Object.fromEntries(flags.map(([key]) => [key, controls[key].checked]));
           payload.daily_count_time = dailyTime.value;
           payload.daily_count_ingredient_ids = [...ingredientChecks].filter(([, input]) => input.checked).map(([id]) => id);
+          payload.automatic_evaluation_enabled = automatic.checked;
+          payload.evaluation_interval_seconds = Number(interval.value);
           await SM.api.patch("/notifications/settings", payload);
-          feedback.append(ui.alert("Notification settings saved. Refresh tasks to evaluate the new rules.", "info"));
+          feedback.append(ui.alert("Notification settings saved. A running worker checks automatically; Refresh tasks is available now.", "info"));
+          await showStatus();
         } catch (error) { feedback.append(ui.alert(error.message)); }
         finally { save.disabled = false; }
       });
       card.append(form);
+      await showStatus();
     } catch (error) {
       card.append(ui.alert(error.message));
     }

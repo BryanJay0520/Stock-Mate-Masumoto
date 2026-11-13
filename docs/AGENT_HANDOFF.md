@@ -5,7 +5,7 @@
 
 ## Where the project is
 
-- **Current phase:** Phase 4 Step 1 — explicit smart notifications and in-app center, implemented and verified.
+- **Current phase:** Phase 4 Step 2 — automatic in-app notification worker, complete.
 - **Progress:** Phase 1 complete (through `a67d07e`). Phase 2 Step 1
   (`2a34b14`) and Step 2 (`f08e48b`) committed. Phase 2 Step 3 (delivery
   receiving & stock integration) is **implemented; Codex reconciliation
@@ -17,8 +17,9 @@
   committed as `85d5994` (verified HEAD and origin/main before Step 3).
   Step 3 advisory planning was committed as `2504cf8` with message
   `Add smart order recommendations and supplier deadline planning`.
-  Phase 4 Step 1 has commit approval. Automatic
-  ordering, background notifications and external delivery have not started.
+  Phase 4 Step 1 was committed as `dd19f35` and synchronized with origin/main.
+  Phase 4 Step 2 adds a dedicated notification worker; automatic ordering and
+  external delivery have not started.
   The demo database has
   Korean Noodles in `pc` with 60 pieces per Box and 180 pieces opening stock.
 - Phase 3 Step 1 verification: 214 backend, 8 frontend, and 45 real-browser
@@ -71,6 +72,24 @@
   and migrated from 0008 to 0009. Its 17 application tables match the backup
   row-for-row; only Alembic's version changed and four empty notification
   tables were added. No reset or reseed occurred.
+- Phase 4 Step 2 adds migration `0010_notification_scheduler`, a separate
+  `app.notification_worker` CLI and database-backed owner lease/heartbeat.
+  Automatic evaluation defaults off and checks every 60–900 seconds when
+  enabled and the worker is running. It calls the Step 1 evaluator; manual
+  refresh and unique event keys remain intact. Administrator Settings shows
+  enablement, interval and read-only health. Browser polling is GET-only;
+  app/device push is future Step 3, while email and LINE are deferred optional
+  channels. See D17/D44 and PROJECT_STATUS.md. Final verification on isolated
+  databases: 372 full backend, 46 focused scheduler/notification/reset, 19
+  frontend unit, and 68/68 real Chrome tests passed; one existing Starlette
+  TestClient/httpx deprecation warning remains. Normal development database
+  `/mnt/c/Users/bryan/Projects/StockMate/backend/stockmate.db` was verified as
+  `development`, backed up with SQLite integrity check at
+  `backend/backups/stockmate-before-scheduler-20261113T004019225047Z.db`, then
+  migrated additively from 0009 to 0010. All 21 existing application tables
+  matched the backup row-for-row on old columns. The `alembic_version` table
+  advanced to 0010, the new worker table was empty, and FK, quick check and
+  ledger reconciliation remained clean. No reset or reseed occurred.
 - Development happens **incrementally, one step at a time** — never implement
   multiple steps without explicit user approval.
 
@@ -466,16 +485,15 @@
 
 ## Pending decisions (waiting on user)
 
-- Phase 4 Step 2 requires separate approval. Do not automatically push, deploy,
-  or start Phase 4 Step 2.
+- Phase 4 Step 2 implementation and verification are complete. Phase 4 Step 3,
+  push and deployment require separate approval.
 
 ## Recommended next task
 
-Review Phase 4 Step 1's implementation and verification in PROJECT_STATUS.md,
-D43 and UX-CONTRACT.md. The explicit evaluator is the only notification write
-path; future background jobs must reuse it and supply a clock/catch-up policy.
-Migration head is `0009_notification_center`. Keep the development database
-untouched. Do not start background delivery or Phase 4 Step 2 without approval.
+The dedicated worker calls the Step 1 evaluator and does not write operational
+inventory or orders. Migration head is `0010_notification_scheduler`. Keep the
+development dataset intact. Wait for separate Phase 4 Step 3 approval; do not
+push or deploy.
 
 ## Git
 

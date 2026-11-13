@@ -16,16 +16,20 @@ Clients (responsive web frontend now; PWA and native mobile wrappers later) are
          │  HTTPS + JSON /api/v1 (same API for all clients)
          ▼
 ┌────────────────────────────────────────────────────────────────┐
-│ FastAPI backend (single process for MVP)                       │
+│ FastAPI web backend (no in-process notification scheduler)     │
 │  ├─ api/v1 routers      → request/response, auth checks        │
 │  ├─ services/           → ALL business logic (pure, testable)  │
 │  ├─ models/             → SQLAlchemy ORM                       │
-│  ├─ scheduler/          → APScheduler 3.x, reminders & alerts  │
-│  └─ notifications/      → provider interface (in-app, email…)  │
+│  └─ notification API    → persisted in-app records             │
 └────────┬───────────────────────────────────────────────────────┘
          ▼
    SQLite (dev) / PostgreSQL (prod) via SQLAlchemy + Alembic
 ```
+
+The separate `app.notification_worker` process uses the same notification
+service and database. It starts only by an explicit command, independently of
+FastAPI worker count or browser activity. Email/LINE and device push delivery
+are not part of this process.
 
 Key rules:
 
@@ -34,9 +38,9 @@ Key rules:
   makes future native mobile apps possible without a rewrite.
 - **One shared database** is the single source of truth. Browser
   `localStorage` is never authoritative.
-- The same backend serves the static frontend, so development needs only one
-  process. The API is fully independent of the bundled frontend — any client
-  that can speak JSON over HTTPS can use it.
+- The web process serves the static frontend. Automatic notifications need a
+  second, explicitly launched worker process; the web app remains usable if it
+  stops. The API is independent of the bundled frontend.
 
 ## 2. Folder structure (target)
 
@@ -55,7 +59,8 @@ StockMate/
 │   │   ├── services/            # inventory.py, scheduling.py, forecasting.py,
 │   │   │                        #   confidence.py, notifications.py, ordering.py
 │   │   ├── auth/                # password hashing, sessions, RBAC dependencies
-│   │   ├── scheduler/           # APScheduler setup, reminder jobs
+│   │   ├── notification_worker.py # explicit worker CLI and signal shutdown
+│   │   ├── services/notification_scheduler.py # lease, heartbeat, health
 │   │   └── seed.py              # fictional demo data (clearly marked)
 │   ├── alembic/                 # migrations
 │   ├── tests/                   # pytest, mirrors app structure
@@ -321,9 +326,15 @@ independent. The one-business-scope database and existing RBAC remain intact.
 **notification_settings** has a singleton row, created by an explicit evaluation
 or admin update, for six category enable flags, a daily count reminder time
 (default 21:30 in the configured business timezone), and last evaluation time.
+Migration `0010_notification_scheduler` adds `automatic_evaluation_enabled`
+(default false) and `evaluation_interval_seconds` (default 60, accepted 60–900).
 **notification_count_rules** opts individual active ingredients into daily
 physical-count reminders. None are opted in by the migration or demo seed.
 Used Stock and receipts never satisfy a physical count.
+
+**notification_worker_state** is a singleton execution record (migration 0010)
+with an owner token, expiring lease, heartbeat, last attempt/success/failure,
+sanitized error type and latest result counts. It stores no account credentials.
 
 No delivery-attempt or external-channel table is created in Step 1. Future
 email/LINE/push delivery must track attempts separately from event and read
@@ -718,10 +729,21 @@ so new instructions are seen. Resolved history is retained; reappearance gets
 a new episode key. Last evaluation time is exposed; the UI flags snapshots
 older than one hour as needing refresh before action.
 
-Future background scheduling must call this same explicit evaluator, not
-duplicate calculations. Run one scheduler worker with retry and clock/catch-up
-policy, then design separate provider attempts and routing. No scheduler or
-external provider runs in Step 1; the older D17 scheduler design is deferred.
+Step 2's explicit worker calls this same evaluator. It takes a 180-second
+database lease using a short SQLite `BEGIN IMMEDIATE` transaction and checks
+ownership again inside the evaluation transaction. A second worker cannot
+run a simultaneous valid evaluation; manual refresh serializes through the
+same database write intent and event keys. The worker polls every 30 seconds,
+evaluating on the first enabled check and then at the configured 60–900-second
+interval. It logs recoverable errors and backs off to at most 300 seconds.
+Crash recovery waits for lease expiry, then evaluates current conditions once;
+it does not replay each missed minute or invent historical stock snapshots.
+Current-day counts can catch up after their reminder time. Past supplier
+cutoffs remain expired; the schedule engine supplies later valid cycles.
+`GET /notifications/scheduler-health` is administrator-only and read-only.
+The bell and open notification/dashboard views poll read-only data once a
+minute while visible. No browser tab generates notification records.
+Push, email and LINE delivery remain separate future work.
 
 ### 5.8 Authentication & mobile readiness
 
@@ -786,8 +808,8 @@ external provider runs in Step 1; the older D17 scheduler design is deferred.
 ## 9. Risks & assumptions (confirmed unless noted)
 
 1. **Single restaurant, single tenant.**
-2. **Single-process scheduler** for MVP; dedicated scheduler process is the
-   documented scale-out path (§5.7).
+2. **Dedicated worker process** for automatic evaluation; SQLite lease
+   coordinates accidental duplicate workers (§5.7).
 3. **UI language: English** first; strings centralized for later Japanese localization.
 4. **Session-cookie auth now**, Bearer tokens added for native apps later.
 5. **Decimal quantities** ("portions" and convertible units); full unit

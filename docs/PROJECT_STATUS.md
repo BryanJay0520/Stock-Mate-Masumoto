@@ -2,7 +2,7 @@
 
 ## Current phase
 
-**Phase 4 Step 1 — Smart notification engine and in-app center: implemented and verified**
+**Phase 4 Step 2 — Automatic notification worker: complete**
 
 - **Step 1 (skeleton): ✅ COMPLETE** (commit `a9de3bc`)
 - **Step 2 (database models + migrations + seed): ✅ COMPLETE** (commit `c9e72ae`)
@@ -429,6 +429,49 @@
   ledger/cache reconciliation and SQLite quick check remain clean. The backup
   and database are Git-ignored.
 
+### Phase 4 Step 2 — Dedicated automatic notification worker
+
+- Migration `0010_notification_scheduler` adds automatic-evaluation enabled
+  (default off) and interval (default 60 seconds, valid 60–900) to the existing
+  notification settings, plus a singleton worker execution-state table. No
+  inventory, order, receipt, demand or ledger table is changed. The normal
+  development database is not used by automated tests or reseeded.
+- `python -m app.notification_worker` is a separately launched WSL process.
+  FastAPI startup, browser tabs and tests do not start it. The worker claims a
+  180-second database lease, heartbeats every 30 seconds, and runs the existing
+  notification evaluator with a second ownership check inside its transaction.
+  It records attempt/success/failure and counts, backs off after failures,
+  releases the lease on graceful shutdown and recovers after an expired lease.
+  Manual refresh and the worker serialize through SQLite write intent and
+  retain the existing unique event identities.
+- Recovery evaluates the current business condition once. It can catch a
+  current-day reminder after 21:30; it never fabricates historical counts or
+  issues a new order instruction for an expired supplier cutoff. Supplier
+  schedules, forecast risk, confirmed/uncertain orders, partial receiving and
+  contact rules remain owned by the existing evaluator.
+- Admin Settings now controls automatic enablement and interval and displays
+  read-only worker health; enabled is distinct from running. A visible app
+  refreshes the bell and current notification/dashboard view every minute
+  using GET requests only. Staff can still read and manually refresh notices
+  when the worker is stopped. App/device push is Step 3; email and LINE remain
+  optional deferred channels.
+- Verification on isolated databases: **372 backend tests passed** in the final
+  full run (one existing Starlette TestClient/httpx deprecation warning),
+  **46 focused scheduler, notification and reset tests passed**, **19 frontend
+  unit tests passed**, and **68/68 real Chrome integration tests passed**.
+  JavaScript syntax checks passed. The Chrome suite launched a separate WSL
+  worker against its disposable database, observed an open inbox update through
+  read-only polling, and checked the 390px and desktop Settings layouts.
+- The exact development database path was verified as
+  `/mnt/c/Users/bryan/Projects/StockMate/backend/stockmate.db` with environment
+  `development` and migration head `0009`. Its checked, Git-ignored online
+  backup is `backend/backups/stockmate-before-scheduler-20261113T004019225047Z.db`.
+  Only migration `0010` was applied. All 21 pre-existing application tables
+  matched the backup row for row on pre-existing columns; the 22nd prior table
+  was `alembic_version`. The new worker table had zero rows. SQLite quick check,
+  foreign keys and ledger/cache reconciliation passed. No normal development
+  database reset, reseed or test execution occurred.
+
 Phase 0 was approved with three final requirements, now reflected in the docs:
 D15 (SQLite-safe concurrency: `BEGIN IMMEDIATE` + atomic conditional UPDATE +
 bounded retries, no `FOR UPDATE` dependency), D23 (all starting quantities —
@@ -444,7 +487,7 @@ junction row; service validates supplier `active` status).
 | 1 | Inventory MVP: DB, auth, ingredients, **basic supplier CRUD + assignment**, dual stock entry, ledger, dashboard, confidence timestamps | 🔶 Steps 1–7 of 8 done |
 | 2 | Supplier schedule rules, delivery calendars, cutoff engine, purchase orders, delivery confirmation, supplier reminders (engine part), alternative-supplier ordering | 🔶 Steps 1–3 committed (`2a34b14`, `f08e48b`, `bfcb824`) |
 | 3 | Demand forecasting, forecast calendar, status colors, order suggestions, confidence indicators | ✅ Steps 1–3 committed (`a49d61a`, `85d5994`, `2504cf8`) |
-| 4 | Scheduled reminders, in-app notifications, preferences, provider routing | 🔶 Step 1 implemented; no scheduler or external delivery |
+| 4 | In-app notifications, automatic evaluation, future app/device push | 🔶 Steps 1–2 complete; app/device push awaits separate approval; email/LINE deferred |
 | 5 | Analytics, reports, CSV export, simple statistics | ⬜ Not started |
 | 6 | Deployment readiness: security, regression, backups | ⬜ Not started |
 | — | PWA milestone (manifest, service worker) | ⬜ Future |

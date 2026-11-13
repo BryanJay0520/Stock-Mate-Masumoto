@@ -21,6 +21,8 @@ SM.app = {
   defaultRoute: "dashboard",
   shellReady: false,
   _navToken: 0,
+  _notificationPoll: null,
+  _notificationPollBusy: false,
 
   boot() {
     document.getElementById("logout-button").addEventListener("click", async () => {
@@ -44,6 +46,9 @@ SM.app = {
   },
 
   showLogin(message) {
+    if (this._notificationPoll) clearInterval(this._notificationPoll);
+    this._notificationPoll = null;
+    SM.pages.notifications.refreshCurrent = null;
     SM.ui.dismissModals();
     this.shellReady = false;
     document.getElementById("shell").classList.remove("is-visible");
@@ -86,7 +91,19 @@ SM.app = {
     );
     document.getElementById("shell").classList.add("is-visible");
     SM.notificationUI.refreshBell();
+    if (!this._notificationPoll) this._notificationPoll = setInterval(() => this.refreshNotificationReads(), 60000);
     this.shellReady = true;
+  },
+
+  async refreshNotificationReads() {
+    if (!SM.auth.user || document.visibilityState !== "visible" || this._notificationPollBusy) return;
+    this._notificationPollBusy = true;
+    try {
+      await SM.notificationUI.refreshBell();
+      const route = location.hash.replace(/^#\//, "").split("?")[0];
+      if (route === "notifications") await SM.pages.notifications.refreshCurrent?.();
+      if (route === "dashboard") await SM.notificationUI.refreshDashboard();
+    } finally { this._notificationPollBusy = false; }
   },
 
   async navigate() {

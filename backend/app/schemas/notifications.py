@@ -46,6 +46,8 @@ class NotificationSettingsOut(BaseModel):
     forecast_shortage_enabled: bool
     verify_pending_order_enabled: bool
     pending_delivery_enabled: bool
+    automatic_evaluation_enabled: bool
+    evaluation_interval_seconds: int
 
 
 class NotificationSettingsUpdate(BaseModel):
@@ -57,6 +59,8 @@ class NotificationSettingsUpdate(BaseModel):
     forecast_shortage_enabled: bool | None = None
     verify_pending_order_enabled: bool | None = None
     pending_delivery_enabled: bool | None = None
+    automatic_evaluation_enabled: bool | None = None
+    evaluation_interval_seconds: int | None = Field(default=None, ge=60, le=900)
 
     @field_validator("daily_count_time")
     @classmethod
@@ -70,9 +74,26 @@ class EvaluationOut(BaseModel):
     created: int
     updated: int
     transitioned: int
+    resolved: int = 0
+    expired: int = 0
+    superseded: int = 0
     evaluated_at: datetime
     business_date: date
     active_conditions: int
+
+
+class SchedulerHealthOut(BaseModel):
+    automatic_evaluation_enabled: bool
+    evaluation_interval_seconds: int
+    status: Literal["disabled", "unknown", "running", "stopped", "error"]
+    heartbeat_at: datetime | None
+    lease_expires_at: datetime | None
+    last_attempt_at: datetime | None
+    last_success_at: datetime | None
+    last_failure_at: datetime | None
+    last_error_code: str | None
+    next_expected_evaluation_at: datetime | None
+    last_result: dict[str, Any] | None
 
 
 NotificationView = Literal["active", "all", "unread", "urgent", "history"]
